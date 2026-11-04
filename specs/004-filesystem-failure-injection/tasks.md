@@ -10,8 +10,8 @@
 
 **Purpose**: Confirm the existing seam and establish the implementation inventory.
 
-- [ ] T001 Inventory all current filesystem call sites and map each to `internal/fsx` operations in `internal/fsx/fsx.go` and `internal/app/datadir.go`; document the absent object-storage caller in `specs/004-filesystem-failure-injection/plan.md`
-- [ ] T002 [P] Add operation constants and typed history/rule names to `internal/fsx/fsx.go` with comments documenting the eight supported operation kinds
+- [X] T001 Inventory all current filesystem call sites and map each to `internal/fsx` operations in `internal/fsx/fsx.go` and `internal/app/datadir.go`; document the absent object-storage caller in `specs/004-filesystem-failure-injection/plan.md`
+- [X] T002 [P] Add operation constants and typed history/rule names to `internal/fsx/fsx.go` with comments documenting the eight supported operation kinds
 
 ---
 
@@ -19,9 +19,9 @@
 
 **Purpose**: Establish the narrow real-filesystem interfaces and preserve current startup behavior before adding fault policy.
 
-- [ ] T003 [P] Write failing OS-adapter tests for create, write, file sync, rename, remove, directory create, directory open, and directory sync in `internal/fsx/fsx_test.go`
-- [ ] T004 Extend `FS`, file-handle, and directory-handle interfaces plus `OS` implementations in `internal/fsx/fsx.go`, delegating directly to the operating-system calls and preserving native errors
-- [ ] T005 Update `internal/app/datadir.go` and `internal/app/datadir_test.go` to use the extended interfaces without changing startup error or cleanup semantics
+- [X] T003 [P] Write failing OS-adapter tests for create, write, file sync, rename, remove, directory create, directory open, and directory sync in `internal/fsx/fsx_test.go`
+- [X] T004 Extend `FS`, file-handle, and directory-handle interfaces plus `OS` implementations in `internal/fsx/fsx.go`, delegating directly to the operating-system calls and preserving native errors
+- [X] T005 Update `internal/app/datadir.go` and `internal/app/datadir_test.go` to use the extended interfaces without changing startup error or cleanup semantics
 
 **Checkpoint**: The real adapter compiles and existing application tests still pass; user-story work can begin.
 
@@ -35,17 +35,17 @@
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Write failing tests for first-call injection and path filtering for create, write, file sync, rename, remove, directory create, directory open, and directory sync in `internal/fsx/faulty_test.go`
-- [ ] T007 [P] [US1] Write failing tests for Nth matching calls, nonmatching calls, first-rule precedence, invalid glob patterns, and unused rules in `internal/fsx/faulty_test.go`
-- [ ] T008 [P] [US1] Write failing tests for injected short writes with nil and nonnil errors, including `io.ErrShortWrite` handling at the abstraction boundary in `internal/fsx/faulty_test.go`
-- [ ] T009 [P] [US1] Write failing failure-path tests proving temporary-file cleanup and original-error preservation for the existing data-directory probe in `internal/app/datadir_test.go`
+- [X] T006 [P] [US1] Write failing tests for first-call injection and path filtering for create, write, file sync, rename, remove, directory create, directory open, and directory sync in `internal/fsx/faulty_test.go`
+- [X] T007 [P] [US1] Write failing tests for Nth matching calls, nonmatching calls, first-rule precedence, invalid glob patterns, and unused rules in `internal/fsx/faulty_test.go`
+- [X] T008 [P] [US1] Write failing tests for injected short writes with nil and nonnil errors, including `io.ErrShortWrite` handling at the abstraction boundary in `internal/fsx/faulty_test.go`
+- [X] T009 [P] [US1] Write failing failure-path tests proving temporary-file cleanup and original-error preservation for the existing data-directory probe in `internal/app/datadir_test.go`
 
 ### Implementation for User Story 1
 
-- [ ] T010 Implement validated glob path matching, Nth matching-call counters, and deterministic first-rule precedence in `internal/fsx/faulty.go`
-- [ ] T011 Implement fault-aware file and directory handles for write, file sync, directory open, directory sync, rename, remove, and directory creation in `internal/fsx/faulty.go`
-- [ ] T012 Implement short-write injection and standard short-write normalization in `internal/fsx/faulty.go`
-- [ ] T013 Route every current disk operation through `fsx.FS` and preserve cleanup/error semantics in `internal/app/datadir.go`; leave the same seam ready for later storage operations
+- [X] T010 Implement validated glob path matching, Nth matching-call counters, and deterministic first-rule precedence in `internal/fsx/faulty.go`
+- [X] T011 Implement fault-aware file and directory handles for write, file sync, directory open, directory sync, rename, remove, and directory creation in `internal/fsx/faulty.go`
+- [X] T012 Implement short-write injection and standard short-write normalization in `internal/fsx/faulty.go`
+- [X] T013 Route every current disk operation through `fsx.FS` and preserve cleanup/error semantics in `internal/app/datadir.go`; leave the same seam ready for later storage operations
 
 **Checkpoint**: All eight operation failures, Nth matching behavior, path filtering, short writes, and cleanup are independently proven by unit tests.
 
@@ -59,14 +59,14 @@
 
 ### Tests for User Story 2
 
-- [ ] T014 [P] [US2] Write failing history assertions for operation kind, primary/secondary paths, byte counts, result, and immutable snapshots in `internal/fsx/faulty_test.go`
-- [ ] T015 [P] [US2] Write failing operation-order and failure-stop assertions for write, file sync, rename, cleanup, and directory sync in `internal/fsx/faulty_test.go`
+- [X] T014 [P] [US2] Write failing history assertions for operation kind, primary/secondary paths, byte counts, result, and immutable snapshots in `internal/fsx/faulty_test.go`
+- [X] T015 [P] [US2] Write failing operation-order and failure-stop assertions for write, file sync, rename, cleanup, and directory sync in `internal/fsx/faulty_test.go`
 
 ### Implementation for User Story 2
 
-- [ ] T016 Implement synchronized ordered history recording before delegation and final outcome capture in `internal/fsx/faulty.go`
-- [ ] T017 Expose copy-safe history snapshots for callers and use them in ordering tests in `internal/fsx/faulty.go` and `internal/fsx/faulty_test.go`
-- [ ] T018 Prove the filesystem abstraction can record the required write/sync/rename/directory-sync sequence and expose failure outcomes for future storage callers in `internal/fsx/faulty_test.go`, while preserving current cleanup behavior in `internal/app/datadir.go` and `internal/app/datadir_test.go`
+- [X] T016 Implement synchronized ordered history recording before delegation and final outcome capture in `internal/fsx/faulty.go`
+- [X] T017 Expose copy-safe history snapshots for callers and use them in ordering tests in `internal/fsx/faulty.go` and `internal/fsx/faulty_test.go`
+- [X] T018 Prove the filesystem abstraction can record the required write/sync/rename/directory-sync sequence and expose failure outcomes for future storage callers in `internal/fsx/faulty_test.go`, while preserving current cleanup behavior in `internal/app/datadir.go` and `internal/app/datadir_test.go`
 
 **Checkpoint**: Ordering and failure visibility are independently assertable without inspecting private fake state.
 
@@ -80,13 +80,13 @@
 
 ### Tests for User Story 3
 
-- [ ] T019 [P] [US3] Add regression tests comparing real-adapter behavior and native error propagation for all supported operations in `internal/fsx/fsx_test.go`
-- [ ] T020 [P] [US3] Add concurrency tests for rule counters and history snapshots under `-race` in `internal/fsx/faulty_test.go`
+- [X] T019 [P] [US3] Add regression tests comparing real-adapter behavior and native error propagation for all supported operations in `internal/fsx/fsx_test.go`
+- [X] T020 [P] [US3] Add concurrency tests for rule counters and history snapshots under `-race` in `internal/fsx/faulty_test.go`
 
 ### Implementation for User Story 3
 
 - [ ] T021 Remove or cover every remaining uncovered branch in `internal/fsx` and affected `internal/app` packages, keeping `scripts/cover-gate.sh` at 100% in `internal/`
-- [ ] T022 Update `README.md` Design with the abstraction, glob/Nth semantics, history behavior, short-write trade-off, and production-adapter choice
+- [X] T022 Update `README.md` Design with the abstraction, glob/Nth semantics, history behavior, short-write trade-off, and production-adapter choice
 - [ ] T023 Run and fix the complete quickstart validation, including `make vet test race cover e2e`, `docker compose up -d --build`, applicable AWS CLI v2 commands, and `docker compose down -v`
 
 **Checkpoint**: Production and fake implementations are both covered, race-safe, documented, and validated end to end.

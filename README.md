@@ -243,3 +243,21 @@ Trade-offs made so far, newest feature last.
   rather than a truncated success. The writer wrapper that tracks this implements `Unwrap`, so
   `http.ResponseController` still works for streaming handlers; it does not forward `io.ReaderFrom`, which
   GetObject can add if sendfile matters.
+
+### 004 filesystem failure injection
+
+- **One explicit `internal/fsx` seam.** The real `fsx.OS` adapter delegates directly to the operating system,
+  while tests wrap it with `fsx.Faulty`. This keeps production behavior unchanged and prevents call-site mocks
+  from hiding a filesystem operation that the storage engine performs.
+- **Glob paths and Nth matching calls.** Fault rules match an operation plus a `path.Match` pattern and count
+  only matching calls. The rule fires on its configured Nth match; this is more precise than a global call index
+  when temporary files and unrelated directories are involved.
+- **History records attempted calls, including failures.** The fake records operation, paths, byte counts and
+  final error in a copy-safe ordered snapshot. Recording failed attempts makes durability-order assertions
+  useful when the failure itself is the behavior under test.
+- **Short writes are surfaced, not retried by the fake.** A configured write can return fewer bytes and a nil
+  error is normalized to `io.ErrShortWrite`. Retry policy belongs to the storage caller, so the fake does not
+  silently turn an incomplete write into success.
+- **The object storage write path is not in this repository yet.** This feature provides and tests the complete
+  seam, including the write/sync/rename/directory-sync sequence, so the future storage path can consume it
+  without another abstraction or mock layer.
