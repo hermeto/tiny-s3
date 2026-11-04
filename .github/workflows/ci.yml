@@ -13,6 +13,14 @@ on:
 permissions:
   contents: read
 
+# One group per event and ref: a new push cancels the branch's previous run of
+# the same kind. Runs on main are never cancelled, so they finish in push order
+# and `latest` never moves back to an older commit; GitHub keeps only the newest
+# queued run, so an intermediate main commit may get no SHA tag.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   gate:
     # The check name is the command that reproduces it locally.
@@ -28,7 +36,39 @@ jobs:
         with:
           persist-credentials: false
 
+      # Every run restores; only successful pushes to main save (below), so a
+      # branch can never seed a cache that main later reads. Build caches are
+      # per target because -race and coverage builds differ.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: gobuild-${{ runner.os }}-${{ matrix.target }}-
+
+      # The Makefile bind-mounts these directories instead of its named volumes.
       - run: make ${{ matrix.target }}
+        env:
+          GOMOD_CACHE: ${{ runner.temp }}/gomod
+          GOBUILD_CACHE: ${{ runner.temp }}/gobuild
+
+      # The four matrix legs share the gomod key; the first save wins and the
+      # others log that the cache already exists. That is expected.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
 
   image:
     name: docker build
@@ -47,3 +87,5 @@ jobs:
           platforms: linux/amd64
           push: false
           cache-from: type=gha,scope=image
+          # Only main writes the layer cache, for the same reason as the Go caches.
+          cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'type=gha,mode=max,scope=image' || '' }}
