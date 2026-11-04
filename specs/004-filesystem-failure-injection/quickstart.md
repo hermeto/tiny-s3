@@ -44,3 +44,7 @@ aws --endpoint-url http://localhost:9000 s3api delete-object --bucket example --
 ```
 
 These commands are validation guidance only; they must not be used to claim this feature implements new S3 operations.
+
+## Commit verification
+
+Feature commits are verified with `git log --show-signature main..HEAD`; each commit in the feature branch is signed with the repository's configured GPG key.

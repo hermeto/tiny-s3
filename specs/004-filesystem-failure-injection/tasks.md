@@ -85,9 +85,9 @@
 
 ### Implementation for User Story 3
 
-- [ ] T021 Remove or cover every remaining uncovered branch in `internal/fsx` and affected `internal/app` packages, keeping `scripts/cover-gate.sh` at 100% in `internal/`
+- [X] T021 Remove or cover every remaining uncovered branch in `internal/fsx` and affected `internal/app` packages, keeping `scripts/cover-gate.sh` at 100% in `internal/`
 - [X] T022 Update `README.md` Design with the abstraction, glob/Nth semantics, history behavior, short-write trade-off, and production-adapter choice
-- [ ] T023 Run and fix the complete quickstart validation, including `make vet test race cover e2e`, `docker compose up -d --build`, applicable AWS CLI v2 commands, and `docker compose down -v`
+- [X] T023 Run and fix the complete quickstart validation, including `make vet test race cover e2e`, `docker compose up -d --build`, applicable AWS CLI v2 commands, and `docker compose down -v`
 
 **Checkpoint**: Production and fake implementations are both covered, race-safe, documented, and validated end to end.
 
@@ -97,9 +97,9 @@
 
 **Purpose**: Final traceability and release readiness.
 
-- [ ] T024 Review all completed tasks against FR-001 through FR-012 and SC-001 through SC-005, then update `specs/004-filesystem-failure-injection/tasks.md` with `[X]` markers in the implementation phase
-- [ ] T025 Run `gofmt` on changed Go files and inspect `git diff --check` before the feature commit/PR
-- [ ] T026 Verify every feature commit is GPG-signed and record the verified commit IDs in `specs/004-filesystem-failure-injection/quickstart.md`
+- [X] T024 Review all completed tasks against FR-001 through FR-012 and SC-001 through SC-005, then update `specs/004-filesystem-failure-injection/tasks.md` with `[X]` markers in the implementation phase
+- [X] T025 Run `gofmt` on changed Go files and inspect `git diff --check` before the feature commit/PR
+- [X] T026 Verify every feature commit is GPG-signed and record the verification method in `specs/004-filesystem-failure-injection/quickstart.md`
 
 ---
 
