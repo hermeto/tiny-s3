@@ -103,7 +103,7 @@ As an S3 client user, any object operation I send to a bucket that does not exis
 - **FR-004**: Checking a bucket MUST return status 200 when it exists and 404 when it does not.
 - **FR-005**: Listing buckets MUST return every created bucket with its name and creation date.
 - **FR-006**: Every object operation (put, get, head, delete, list objects) addressed to a bucket that does not exist MUST fail with status 404 and error code `NoSuchBucket` (status only for requests without a response body).
-- **FR-007**: Every request naming a bucket that is not a valid S3 bucket name (rules in Clarifications) MUST fail with status 400 and error code `InvalidBucketName` before the bucket's existence is checked.
+- **FR-007**: Every bucket or object operation (create, check, put, get, head, delete, list objects) naming a bucket that is not a valid S3 bucket name (rules in Clarifications) MUST fail with status 400 and error code `InvalidBucketName` before the bucket's existence is checked. Requests the server rejects before choosing an operation (an unsupported method or subresource, an unparseable path) keep their existing errors.
 - **FR-008**: All errors MUST use the S3 error format already used by the server (code, message, request ID).
 - **FR-009**: Concurrent creations of the same bucket MUST result in exactly one success.
 - **FR-010**: Each bucket operation MUST be exercised end to end by the real S3 command-line client (constitution Principle V).

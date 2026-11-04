@@ -19,7 +19,7 @@ Requests rejected by routing (subresource, unsupported method, `InvalidURI`) nev
 | Condition | Status | Code / headers |
 |-----------|--------|----------------|
 | Invalid name | 400 | `InvalidBucketName` |
-| Body over 64 KiB, unreadable, or not a `CreateBucketConfiguration` document | 400 | `MalformedXML` |
+| Body over 64 KiB (65,536 bytes), unreadable, or not a `CreateBucketConfiguration` document | 400 | `MalformedXML` |
 | `LocationConstraint` other than absent, empty or `us-east-1` | 400 | `InvalidLocationConstraint` |
 | Bucket exists | 409 | `BucketAlreadyOwnedByYou` |
 | Storage failure | 500 | `InternalError`, logged as `bucket_error` |

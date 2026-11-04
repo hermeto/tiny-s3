@@ -44,7 +44,7 @@ Expected:
 
 1. Exit 0, prints `{"Location": "/demo"}`.
 2. Exit 254, `An error occurred (BucketAlreadyOwnedByYou) when calling the CreateBucket operation`.
-3. Exit 0, prints `{"BucketRegion": "us-east-1", ...}` or nothing beyond the region fields.
+3. Exit 0; the output includes `"BucketRegion": "us-east-1"`.
 4. Exit 254, `An error occurred (404) when calling the HeadBucket operation: Not Found`.
 5. Exit 0, `Buckets` holds `demo` with a `CreationDate`.
 6. Same output as 5, with the same `CreationDate`: the bucket survived the restart.

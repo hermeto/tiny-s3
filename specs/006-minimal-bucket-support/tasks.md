@@ -40,7 +40,7 @@
 - [ ] T008 [P] [US1] Write failing fault tests in `internal/storage/bucket_fault_test.go`: the successful create history matches `contracts/storage-buckets.md`; a failure injected at each step before the rename leaves no bucket (in memory and after reopen) and an empty `tmp/`; a `buckets/` open/sync/close failure after the rename rolls back (bucket absent after reopen); a rollback failure returns both errors and leaves the bucket present; an unencodable creation date (year 10000) fails with `encode bucket`
 - [ ] T009 [P] [US1] Write failing load tests in `internal/storage/bucket_load_test.go`: each bad entry fails `Open` with `ErrCorruptRecord` naming the path ("unreadable, over 64 KiB, does not decode, unknown version, name different from its file name, zero creation date", invalid file name, missing `.json`); `ReadDir` and `Open` failures on `buckets/` are returned
 - [ ] T010 [P] [US1] Write a failing concurrency test in `internal/storage/bucket_test.go`: 16 goroutines create the same bucket; exactly one succeeds, the rest get `ErrBucketExists` (run under `-race`)
-- [ ] T011 [P] [US1] Write failing CreateBucket handler tests in `internal/s3api/bucket_test.go` with a fake `BucketStore`: 200 + `Location: /<bucket>`; no body, whitespace body, `LocationConstraint` absent/empty/`us-east-1` → created; other location → 400 `InvalidLocationConstraint`; bad XML, wrong root element, body over 64 KiB, body read error → 400 `MalformedXML`; store errors → 400 `InvalidBucketName`, 409 `BucketAlreadyOwnedByYou`, 500 `InternalError` logged as `bucket_error` with the request ID
+- [ ] T011 [P] [US1] Write failing CreateBucket handler tests in `internal/s3api/bucket_test.go` with a fake `BucketStore`: 200 + `Location: /<bucket>`; no body, whitespace body, `LocationConstraint` absent/empty/`us-east-1` → created; other location → 400 `InvalidLocationConstraint`; bad XML, wrong root element, body over 64 KiB (65,536 bytes accepted, 65,537 rejected), body read error → 400 `MalformedXML`; store errors → 400 `InvalidBucketName`, 409 `BucketAlreadyOwnedByYou`, 500 `InternalError` logged as `bucket_error` with the request ID
 - [ ] T012 [P] [US1] Write failing tests in `internal/app/app_test.go`: `Main` serves CreateBucket on a real data dir; a `storage.Open` failure (injected with `fsx.Faulty` on `MkdirAll` of `buckets`) exits 1 with `s3d: storage:` on stderr and never logs `listening`
 
 ### Implementation for User Story 1
@@ -63,7 +63,7 @@
 ### Tests for User Story 2
 
 - [ ] T017 [P] [US2] Write failing tests for `HeadBucket` in `internal/storage/bucket_test.go`: existing → the `Bucket`; missing → `ErrNoSuchBucket`; invalid → `ErrInvalidBucketName`
-- [ ] T018 [P] [US2] Write failing gate tests in `internal/s3api/handler_test.go`: with `Ops.CheckBucket` set, HEAD/GET-list/PUT-object/GET/HEAD/DELETE on a bucket run the Op only when the check passes and otherwise answer its error (HEAD without body); `PUT /<bucket>` skips the check; `GET /` and routing errors skip it; a nil Op behind a passing check still answers 501
+- [ ] T018 [P] [US2] Write failing gate tests in `internal/s3api/handler_test.go`: with `Ops.CheckBucket` set, HEAD/GET-list/PUT-object/GET/HEAD/DELETE on a bucket run the Op only when the check passes and otherwise answer its error (HEAD without body); `PUT /<bucket>` skips the check; `GET /` and routing errors skip it; a nil Op behind a passing check still answers 501. In the same task, update the expectations the gate changes so they fail first: `e2e/routing_test.go` (HEAD `/b/k` → 404 without body; replace the `GET /` 501 row with `GET /b?acl` 501) and `TestMainServesAndStops` in `internal/app/app_test.go` (GET `/bucket/key` → 404 `NoSuchBucket`)
 - [ ] T019 [P] [US2] Write failing tests for `CheckBucket` and the HeadBucket Op in `internal/s3api/bucket_test.go`: existing → 200 with `x-amz-bucket-region: us-east-1` and no body; `ErrNoSuchBucket` → 404 `NoSuchBucket`; `ErrInvalidBucketName` → 400 `InvalidBucketName`; other error → 500 `InternalError` logged as `bucket_error`
 
 ### Implementation for User Story 2
@@ -82,7 +82,7 @@
 
 **Independent Test**: Run the five object commands against a never-created bucket.
 
-- [ ] T023 [US4] Update `e2e/routing_test.go` for the gate (HEAD `/b/k` → 404 without body; replace the `GET /` 501 row with `GET /b?acl` 501) and update `TestMainServesAndStops` in `internal/app/app_test.go` (GET `/bucket/key` → 404 `NoSuchBucket`)
+- [ ] T023 [US4] Write an integration test in `internal/app/app_test.go` through `Main` with a real data dir: PUT/GET/DELETE object and `GET /<bucket>?list-type=2` on a missing bucket → 404 `NoSuchBucket`, HEAD object → 404 without body, GET object on a created bucket → 501. US4 is delivered by the shared gate (T021), so this test verifies the wiring through the real store and may pass on its first run
 - [ ] T024 [US4] Add e2e tests to `e2e/buckets_test.go`: `put-object`, `get-object`, `delete-object`, `list-objects-v2` on a missing bucket → `NoSuchBucket`; `head-object` → `(404)`; `get-object` on an existing bucket → `NotImplemented`
 
 **Checkpoint**: Gate verified with the real CLI.
@@ -122,6 +122,7 @@
 - Setup (T001–T002) blocks only the e2e tasks (T016, T022, T024, T028).
 - Foundational (T003–T006) blocks all stories.
 - US1 (T007–T016) is the MVP; US2 (T017–T022) needs the store from T013 and `BucketOps` from T014; US4 (T023–T024) needs the gate from T021; US3 (T025–T028) needs T013–T014.
+- T018 changes existing e2e and app expectations together with the new gate tests, so the suite is never left asserting the pre-gate behavior after T021.
 - Polish runs last.
 
 Within each story, test tasks come first and must fail before the implementation task that follows.
@@ -143,3 +144,16 @@ T012 internal/app/app_test.go
 ## Implementation Strategy
 
 MVP is US1 (create plus restart), then US2 and US4 (the gate, which object features depend on), then US3. Each checkpoint runs `make test`; the full gate and the quickstart run once at the end.
+
+## Analysis Remediation (2026-11-04)
+
+`/speckit-analyze` findings, each fixed with the recommended option as authorized for this feature:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| I1 | MEDIUM | FR-007 said "every request naming a bucket", but requests rejected by routing (subresource, method, `InvalidURI`) keep their errors (research R6, contract). | FR-007 now names the bucket and object operations and states that routing errors are unchanged. |
+| I2 | MEDIUM | T023 updated e2e and app expectations after the gate (T021) had already changed them, leaving the suite red in between and the expectation change not test-first. | Moved those updates into T018 (before T021); T023 is now a `Main`-level verification test for US4. |
+| U1 | MEDIUM | Quickstart step 3 expected "`BucketRegion` ... or nothing", which is not checkable. | Step 3 now expects `"BucketRegion": "us-east-1"`. |
+| U2 | LOW | "Body over 64 KiB" left the boundary open. | Contract and T011 state 65,536 bytes accepted, 65,537 rejected. |
+
+No constitution conflicts. Coverage: FR-001–FR-013 and SC-001–SC-005 each map to at least one task (100%).
