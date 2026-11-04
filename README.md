@@ -53,12 +53,96 @@ Every target runs in a digest-pinned `golang:1.27.3` container. Module and build
 | `make e2e` | Builds the real `s3d` binary and drives it with real signals (`e2e/`, build tag `e2e`, about 10 s) |
 | `make clean-cache` | Removes the cache volumes |
 
-A pull request is mergeable when `make test`, `make race` and `make cover` pass (see
-`.specify/memory/constitution.md`). Run `make e2e` too.
+A pull request is mergeable when the CI checks below pass (see `.specify/memory/constitution.md`). Run the
+same targets locally before pushing, and `make e2e` too.
+
+To use other cache locations, set `GOMOD_CACHE` and `GOBUILD_CACHE`: a bare name is a Docker volume, an absolute
+path is a bind mount (`make test GOBUILD_CACHE="$PWD/.tmp/gobuild"`). CI uses this to save the caches between
+runs.
 
 Layout: `cmd/s3d` only handles signals and the exit code; `internal/app` wires everything; `internal/config`
 parses flags; `internal/fsx` is the filesystem layer with fault injection; `internal/s3api` renders S3
 responses; `internal/server` runs the HTTP server and its shutdown.
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to any branch and on every pull request to `main`.
+Each check is named after the command that reproduces it locally:
+
+| Check | Reproduce with |
+|-------|----------------|
+| `make vet` | `make vet` |
+| `make test` | `make test` |
+| `make race` | `make race` |
+| `make cover` | `make cover` |
+| `docker build` | `docker build .` |
+
+The checks run in parallel and independently, so one failure does not hide another. A new push to a branch
+cancels that branch's run still in progress. Go module and build caches, and the image layer cache, are saved
+from `main` and restored by every run.
+
+On a push to `main`, once all five checks pass, a `publish` job pushes the image to
+`ghcr.io/hermeto/tiny-s3`, tagged with the full commit SHA and `latest` (linux/amd64):
+
+```sh
+docker pull ghcr.io/hermeto/tiny-s3:latest
+```
+
+CI runs on linux/amd64; on Apple Silicon, local runs use the arm64 variant of the same pinned image. A failure
+that depends on the architecture (timing- or race-sensitive tests) may show up only in CI. The CI result is
+authoritative: treat it as a bug, not a flake. Reproducing it under amd64 emulation is best-effort, and `-race`
+may not work under emulation.
+
+## Protecting main
+
+The checks only block merges once `main` has a ruleset that requires them. This needs repository admin and is
+done once.
+
+1. Settings → Rules → Rulesets → New ruleset → New branch ruleset.
+2. Name it `main`, set Enforcement status to Active, and add the target "Include default branch".
+3. Enable Restrict deletions and Block force pushes.
+4. Enable Require a pull request before merging (0 required approvals works for a single maintainer).
+5. Enable Require status checks to pass, tick Require branches to be up to date before merging, and add
+   `make vet`, `make test`, `make race`, `make cover` and `docker build` with GitHub Actions as the source.
+   A check appears in the picker once it has run at least once in the last week.
+6. Save.
+
+The same ruleset from the command line (`15368` is the GitHub Actions app ID):
+
+```sh
+gh api --method POST repos/hermeto/tiny-s3/rulesets --input - <<'EOF'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "pull_request", "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false } },
+    { "type": "required_status_checks", "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          { "context": "make vet", "integration_id": 15368 },
+          { "context": "make test", "integration_id": 15368 },
+          { "context": "make race", "integration_id": 15368 },
+          { "context": "make cover", "integration_id": 15368 },
+          { "context": "docker build", "integration_id": 15368 } ] } }
+  ]
+}
+EOF
+```
+
+Renaming a job in `ci.yml` renames its check: update the ruleset in the same pull request, or every pull request
+waits forever for a check that no longer exists.
+
+The GHCR package is private when first published. To let anyone pull it: on the repository page, open
+Packages → `tiny-s3` → Package settings → Danger Zone → Change visibility → Public.
 
 ## Design
 
@@ -98,3 +182,35 @@ Trade-offs made so far, newest feature last.
   sending it tests the clean drain, withholding it tests the forced 9-second path. A request whose header is
   still incomplete is never treated as in flight: `net/http` closes such a connection as idle once it is 5
   seconds old, and drops a header completed after shutdown began.
+
+### 002 CI pipeline
+
+- **Gates call `make`, not `actions/setup-go`.** CI runs the same Makefile targets in the same digest-pinned
+  container as developers, so there is one toolchain definition and CI cannot drift from local. The cost is
+  pulling the golang image in every gate job.
+- **Caches through overridable bind mounts.** Runners start with empty Docker volumes, so `GOMOD_CACHE` and
+  `GOBUILD_CACHE` let CI mount runner directories that `actions/cache` saves and restores. They default to the
+  named volumes, so local runs are unchanged. The names avoid Go's `GOMODCACHE`/`GOCACHE` because make imports
+  the environment, and a host Go setup must not leak into the container.
+- **Caches are saved only from `main`.** Every run restores; only successful pushes to `main` save, for the Go
+  caches and the image layer cache. A branch can never seed a cache that `main` reads, and the 10 GB cache quota
+  is not churned by short-lived branches. A branch's second push is therefore no faster than its first until
+  `main` has a cache.
+- **Push and pull request triggers both run.** A pull request branch is validated twice per commit, once per
+  event. Accepted for simplicity; runner minutes are free for public repositories.
+- **`main` runs are serialized, never cancelled.** They finish in push order, so `latest` never moves back to an
+  older commit. GitHub keeps only the newest queued run, so when several commits land during a run, the
+  intermediate ones get no SHA tag. A manual re-run of an older `main` run is the one case ordering does not
+  cover, so `publish` tags `latest` only when the run's commit is still the tip of `main`; the SHA tag is always
+  pushed.
+- **Publish rebuilds from the layer cache** instead of passing the `docker build` image as an artifact. With a
+  warm cache the layers are the ones the check built, without an upload/download round trip. Revisit if spec
+  014 needs to run e2e against the exact built image. Provenance metadata includes build timestamps, so a re-run
+  can push a new digest with the same layers.
+- **Actions pinned by commit SHA, kept current by Dependabot.** Tags can be moved by whoever controls the action
+  repository; SHAs cannot. Dependabot opens weekly pull requests that bump the SHA and its version comment.
+- **Least privilege.** The workflow token is read-only; only `publish` gets `packages: write`. Checkout runs with
+  `persist-credentials: false`, so no make target or build step can read the token from `.git/config`.
+  `pull_request_target` is not used, so fork pull requests never run with write access.
+- **Anonymous Docker Hub pulls.** No Docker Hub secret is stored. If pull limits start failing runs, add a
+  read-only Docker Hub token as a secret and a login step in the gate and image jobs.

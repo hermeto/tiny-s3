@@ -9,11 +9,18 @@ GO_IMAGE := golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a60763
 TTY := $(shell test -t 0 && echo -t)
 
 # Module and build caches live in named volumes so repeat runs download nothing
-# and no root-owned cache files land in the checkout.
+# and no root-owned cache files land in the checkout. Each value is the source
+# of a `docker run -v` mount: a bare name is a named volume, an absolute path
+# is a bind mount (CI points both at runner directories it saves between runs).
+# The names deliberately differ from Go's GOMODCACHE/GOCACHE: make imports the
+# environment, so a host Go setup must never leak into the container.
+GOMOD_CACHE ?= tiny-s3-gomod
+GOBUILD_CACHE ?= tiny-s3-gobuild
+
 DOCKER_RUN := docker run --rm $(TTY) \
 	-v "$(CURDIR)":/src -w /src \
-	-v tiny-s3-gomod:/go/pkg/mod \
-	-v tiny-s3-gobuild:/root/.cache/go-build \
+	-v "$(GOMOD_CACHE)":/go/pkg/mod \
+	-v "$(GOBUILD_CACHE)":/root/.cache/go-build \
 	-e GOTOOLCHAIN=local \
 	-e GOFLAGS=-mod=readonly \
 	$(GO_IMAGE)

@@ -1,0 +1,151 @@
+# CI for tiny-s3. Contract: specs/002-ci-pipeline/contracts/ci-checks.md.
+#
+# Job names are the required-check names in the main ruleset. Renaming a job
+# means updating the ruleset in the same pull request.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One group per event and ref: a new push cancels the branch's previous run of
+# the same kind. Runs on main are never cancelled, so they finish in push order
+# and `latest` never moves back to an older commit; GitHub keeps only the newest
+# queued run, so an intermediate main commit may get no SHA tag.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  gate:
+    # The check name is the command that reproduces it locally.
+    name: make ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [vet, test, race, cover]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Every run restores; only successful pushes to main save (below), so a
+      # branch can never seed a cache that main later reads. Build caches are
+      # per target because -race and coverage builds differ.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: gobuild-${{ runner.os }}-${{ matrix.target }}-
+
+      # The Makefile bind-mounts these directories instead of its named volumes.
+      - run: make ${{ matrix.target }}
+        env:
+          GOMOD_CACHE: ${{ runner.temp }}/gomod
+          GOBUILD_CACHE: ${{ runner.temp }}/gobuild
+
+      # The four matrix legs share the gomod key; the first save wins and the
+      # others log that the cache already exists. That is expected.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
+
+  image:
+    name: docker build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=image
+          # Only main writes the layer cache, for the same reason as the Go caches.
+          cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'type=gha,mode=max,scope=image' || '' }}
+
+  # Publishes only from main and only after all five checks pass. The rebuild
+  # is a layer-cache hit, so it pushes the layers `docker build` produced.
+  publish:
+    name: publish
+    needs: [gate, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The only job with any write permission.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Concurrency keeps new pushes in order, but a manual re-run of an older
+      # main run would still tag `latest`. Tag it only when this commit is the
+      # tip of main. If main moves after this check, the newer run is queued
+      # behind this one and tags `latest` itself.
+      - id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [[ $tip == "$GITHUB_SHA" ]]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main is at $tip; not tagging $GITHUB_SHA as latest"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Lower-cases the image name and adds OCI labels; the source label links
+      # the package to this repository.
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable=${{ steps.tip.outputs.latest }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=image
