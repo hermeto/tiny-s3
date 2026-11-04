@@ -1,0 +1,11 @@
+.git
+.claude
+.specify
+specs
+coverage.*
+*.out
+*.test
+bin
+dist
+data
+.DS_Store

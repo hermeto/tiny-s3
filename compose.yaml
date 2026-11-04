@@ -1,0 +1,19 @@
+# Pin the project name so the volume is always tiny-s3_data, whatever the
+# checkout directory is called.
+name: tiny-s3
+
+services:
+  s3d:
+    build: .
+    ports:
+      - "9000:9000"
+    command: ["-listen=:9000", "-data-dir=/data"]
+    volumes:
+      - data:/data
+    # s3d exits within 10 s of SIGTERM (9 s drain + margin). Docker's default
+    # 10 s grace period would race that deadline, so give it more room before
+    # SIGKILL.
+    stop_grace_period: 15s
+
+volumes:
+  data: {}
