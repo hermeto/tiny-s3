@@ -6,8 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/hermeto/tiny-s3/internal/fsx"
 )
 
 func TestReaderSurvivesOverwrite(t *testing.T) {
@@ -149,5 +153,65 @@ func TestConcurrentPutsAndDeletes(t *testing.T) {
 	b, err := io.ReadAll(r)
 	if err != nil || md5hex(b) != info.MD5 || len(data) != 1 {
 		t.Fatalf("final: %+v, %d bytes, %v, data %v", info, len(b), err, data)
+	}
+}
+
+// blockingFS fails the first sync of dir (later syncs, such as the
+// rollback's, pass through), but only after signalling entered and
+// waiting for release, so a test can act while a commit is in its window
+// between the record rename and the meta/ sync.
+type blockingFS struct {
+	fsx.FS
+	dir              string
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (b *blockingFS) OpenDir(path string) (fsx.Dir, error) {
+	d, err := b.FS.OpenDir(path)
+	if err != nil || path != b.dir {
+		return d, err
+	}
+	return &blockingDir{Dir: d, fs: b}, nil
+}
+
+type blockingDir struct {
+	fsx.Dir
+	fs *blockingFS
+}
+
+func (d *blockingDir) Sync() error {
+	err := d.Dir.Sync()
+	d.fs.once.Do(func() {
+		close(d.fs.entered)
+		<-d.fs.release
+		err = errInjected
+	})
+	return err
+}
+
+func TestHeadNeverSeesRolledBackCommit(t *testing.T) {
+	t.Parallel()
+	s, root := newStore(t, nil)
+	bfs := &blockingFS{FS: fsx.OS{}, dir: filepath.Join(root, "meta"), entered: make(chan struct{}), release: make(chan struct{})}
+	s.fsys = bfs
+	putErr := make(chan error, 1)
+	go func() {
+		_, err := putString(s, v1)
+		putErr <- err
+	}()
+	<-bfs.entered
+	headErr := make(chan error, 1)
+	go func() {
+		_, err := s.Head("b", "k")
+		headErr <- err
+	}()
+	time.Sleep(20 * time.Millisecond) // let Head reach the record read
+	close(bfs.release)
+	if err := <-putErr; !errors.Is(err, errInjected) {
+		t.Fatalf("Put = %v, want injected sync error", err)
+	}
+	if err := <-headErr; !errors.Is(err, ErrNoSuchKey) {
+		t.Fatalf("concurrent Head = %v, want ErrNoSuchKey: it saw a version that was rolled back", err)
 	}
 }

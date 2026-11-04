@@ -274,8 +274,8 @@ Trade-offs made so far, newest feature last.
 - **Hashed record names.** `meta/` holds `hex(sha256(len(bucket) ":" bucket key))`. No key can name a path
   outside the store, and the length prefix keeps the mapping unambiguous without relying on bucket-name
   rules. The record stores the real bucket and key, which a future index rebuild will read back.
-- **Striped key locks, single process.** 64 mutexes serialize commit, Delete and Get's record-plus-data lookup
-  per key, so concurrent Puts end with exactly one winner and no orphaned loser data. Uploads stream outside
+- **Striped key locks, single process.** 64 mutexes serialize commit, Delete, Head and Get's record-plus-data
+  lookup per key, so concurrent Puts end with exactly one winner and no orphaned loser data. Uploads stream outside
   the lock. The locks are in-process, which is enough because one s3d owns a data directory.
 - **Rollback when the `meta/` sync fails after the rename.** The engine restores the previous record (or
   removes the new one) so a failed Put never leaves the new version visible. If the rollback also fails, the

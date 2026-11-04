@@ -61,13 +61,18 @@ func (s *Store) readRecord(name string) (record, error) {
 	return rec, nil
 }
 
-// Head returns the metadata of a committed object. It needs no lock: a record
-// is replaced by an atomic rename, so it is always read whole.
+// Head returns the metadata of a committed object. It takes the key lock: a
+// record is always read whole thanks to the atomic rename, but without the
+// lock Head could see a record between the commit rename and the meta/ sync,
+// before it is durable or just before a rollback removes it.
 func (s *Store) Head(bucket, key string) (Info, error) {
 	if err := validateKey(key); err != nil {
 		return Info{}, err
 	}
-	rec, err := s.readRecord(recordName(bucket, key))
+	name := recordName(bucket, key)
+	unlock := s.locks.lock(name)
+	defer unlock()
+	rec, err := s.readRecord(name)
 	if err != nil {
 		return Info{}, err
 	}
