@@ -21,6 +21,9 @@ const (
 	OpOpenDir    = "opendir"
 	OpDirSync    = "dirsync"
 	OpClose      = "close"
+	OpOpen       = "open"    // FS.Open, matched on path
+	OpRead       = "read"    // ReadFile.Read and ReadAt, matched on file name
+	OpReadDir    = "readdir" // FS.ReadDir, matched on path
 )
 
 // Fault makes an operation fail or return a short write on the Nth matching
@@ -194,6 +197,33 @@ func (f *Faulty) Remove(pathValue string) error {
 	return err
 }
 
+// Open implements FS and wraps the returned read-only file.
+func (f *Faulty) Open(pathValue string) (ReadFile, error) {
+	index, fault, inject := f.begin(OpOpen, pathValue, "", 0)
+	if inject {
+		f.finish(index, 0, fault.Err)
+		return nil, fault.Err
+	}
+	file, err := f.FS.Open(pathValue)
+	f.finish(index, 0, err)
+	if err != nil {
+		return nil, err
+	}
+	return &faultyReadFile{ReadFile: file, owner: f}, nil
+}
+
+// ReadDir implements FS.
+func (f *Faulty) ReadDir(pathValue string) ([]fs.DirEntry, error) {
+	index, fault, inject := f.begin(OpReadDir, pathValue, "", 0)
+	if inject {
+		f.finish(index, 0, fault.Err)
+		return nil, fault.Err
+	}
+	entries, err := f.FS.ReadDir(pathValue)
+	f.finish(index, 0, err)
+	return entries, err
+}
+
 // WrapFile applies this fake's rules to an existing file handle.
 func (f *Faulty) WrapFile(file File) File { return &faultyFile{File: file, owner: f} }
 
@@ -272,5 +302,41 @@ func (d *faultyDir) Close() error {
 		err = fault.Err
 	}
 	d.owner.finish(index, 0, err)
+	return err
+}
+
+type faultyReadFile struct {
+	ReadFile
+	owner *Faulty
+}
+
+func (f *faultyReadFile) Read(p []byte) (int, error) {
+	return f.read(p, func() (int, error) { return f.ReadFile.Read(p) })
+}
+
+func (f *faultyReadFile) ReadAt(p []byte, off int64) (int, error) {
+	return f.read(p, func() (int, error) { return f.ReadFile.ReadAt(p, off) })
+}
+
+// read records OpRead and either injects the fault or runs do. EOF is a
+// normal outcome, so it is recorded like any other error.
+func (f *faultyReadFile) read(p []byte, do func() (int, error)) (int, error) {
+	index, fault, inject := f.owner.begin(OpRead, f.Name(), "", len(p))
+	if inject {
+		f.owner.finish(index, 0, fault.Err)
+		return 0, fault.Err
+	}
+	n, err := do()
+	f.owner.finish(index, n, err)
+	return n, err
+}
+
+func (f *faultyReadFile) Close() error {
+	index, fault, inject := f.owner.begin(OpClose, f.Name(), "", 0)
+	err := f.ReadFile.Close()
+	if inject && fault.Err != nil {
+		err = fault.Err
+	}
+	f.owner.finish(index, 0, err)
 	return err
 }

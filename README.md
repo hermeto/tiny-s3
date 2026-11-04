@@ -261,3 +261,31 @@ Trade-offs made so far, newest feature last.
 - **The object storage write path is not in this repository yet.** This feature provides and tests the complete
   seam, including the write/sync/rename/directory-sync sequence, so the future storage path can consume it
   without another abstraction or mock layer.
+
+### 005 durable object storage
+
+- **The metadata record is the commit point.** Put streams the body into `tmp/`, syncs it, renames it to an
+  immutable `data/<version>` file and syncs `data/`; only then does it write the record to `tmp/`, sync it,
+  rename it over `meta/<hash>.json` and sync `meta/`. A crash before the record rename leaves the old state;
+  the cost is two file syncs and two directory syncs per Put.
+- **Immutable data versions instead of overwrite in place.** Every Put writes a new data file and the record
+  points at it, so a reader that opened a version keeps reading it after an overwrite or delete (POSIX keeps
+  unlinked open files alive). The previous version is removed only after the new record is durable.
+- **Hashed record names.** `meta/` holds `hex(sha256(len(bucket) ":" bucket key))`. No key can name a path
+  outside the store, and the length prefix keeps the mapping unambiguous without relying on bucket-name
+  rules. The record stores the real bucket and key, which a future index rebuild will read back.
+- **Striped key locks, single process.** 64 mutexes serialize commit, Delete, Head and Get's record-plus-data
+  lookup per key, so concurrent Puts end with exactly one winner and no orphaned loser data. Uploads stream outside
+  the lock. The locks are in-process, which is enough because one s3d owns a data directory.
+- **Rollback when the `meta/` sync fails after the rename.** The engine restores the previous record (or
+  removes the new one) so a failed Put never leaves the new version visible. If the rollback also fails, the
+  error is returned and the new data is kept, so the key points at a complete version, never a partial one.
+- **Best-effort cleanup after the commit.** Removing the previous version's data after a commit, or the data
+  file after a Delete, does not fail the operation; a failure leaves an invisible orphan. `Open` clears
+  `tmp/`, but orphans in `data/` (also from a crash between the data rename and the record commit) wait for
+  the index-rebuild feature, which has to read every record anyway.
+- **Flat directories.** `data/` and `meta/` have no hash fan-out. ext4 and XFS index large directories, and
+  the record format names its data file, so fan-out can come later without a migration.
+- **Not wired to HTTP yet.** The engine has no S3 endpoint in this feature; the PutObject feature maps its
+  errors (IncompleteBody, BadDigest, EntityTooLarge, KeyTooLongError, NoSuchKey) to S3 responses and adds the
+  `aws s3api` e2e tests.
