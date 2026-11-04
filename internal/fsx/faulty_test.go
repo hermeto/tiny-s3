@@ -3,6 +3,7 @@ package fsx_test
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"testing"
 
@@ -118,6 +119,12 @@ func TestFaultyShortWrite(t *testing.T) {
 	if n != 1 || !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("Write = (%d, %v), want short write", n, err)
 	}
+	errInjected := errors.New("write injected")
+	withErr := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpWrite, WriteCount: 1, Err: errInjected})
+	n, err = withErr.WrapFile(f).Write([]byte("abc"))
+	if n != 1 || !errors.Is(err, errInjected) {
+		t.Fatalf("Write with injected error = (%d, %v), want injected error", n, err)
+	}
 }
 
 func TestFaultyRecordsDurabilityOrder(t *testing.T) {
@@ -195,3 +202,45 @@ func TestFaultyHistoryAndRulesAreRaceSafe(t *testing.T) {
 		t.Fatalf("history length = %d, want %d", got, workers)
 	}
 }
+
+func TestFaultyPassesUnderlyingOpenDirErrorAndInjectsDirClose(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	fsys := fsx.NewFaulty(fsx.OS{})
+	if _, err := fsys.OpenDir(missing); err == nil {
+		t.Fatal("OpenDir on missing path succeeded")
+	}
+
+	dirPath := t.TempDir()
+	baseDir, err := (fsx.OS{}).OpenDir(dirPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer baseDir.Close()
+	errInjected := errors.New("close injected")
+	closeFS := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpClose, Err: errInjected})
+	if err := closeFS.WrapDir(baseDir).Close(); !errors.Is(err, errInjected) {
+		t.Fatalf("Close = %v, want injected error", err)
+	}
+}
+
+type shortFile struct{}
+
+func (shortFile) Name() string              { return "short" }
+func (shortFile) Write([]byte) (int, error) { return 1, nil }
+func (shortFile) Sync() error               { return nil }
+func (shortFile) Close() error              { return nil }
+
+func TestFaultyNormalizesUnderlyingShortWrite(t *testing.T) {
+	fsys := fsx.NewFaulty(stubFS{file: shortFile{}})
+	if n, err := fsys.WrapFile(shortFile{}).Write([]byte("abc")); n != 1 || !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("Write = (%d, %v), want short write", n, err)
+	}
+}
+
+type stubFS struct{ file fsx.File }
+
+func (s stubFS) MkdirAll(string, fs.FileMode) error          { return nil }
+func (s stubFS) CreateTemp(string, string) (fsx.File, error) { return s.file, nil }
+func (s stubFS) OpenDir(string) (fsx.Dir, error)             { return nil, errors.New("unused") }
+func (s stubFS) Rename(string, string) error                 { return nil }
+func (s stubFS) Remove(string) error                         { return nil }
