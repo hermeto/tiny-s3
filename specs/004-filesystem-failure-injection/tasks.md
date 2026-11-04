@@ -10,7 +10,7 @@
 
 **Purpose**: Confirm the existing seam and establish the implementation inventory.
 
-- [ ] T001 Inventory all current filesystem call sites and map each to `internal/fsx` operations in `internal/fsx/fsx.go`, `internal/app/datadir.go`, and future storage callers
+- [ ] T001 Inventory all current filesystem call sites and map each to `internal/fsx` operations in `internal/fsx/fsx.go` and `internal/app/datadir.go`; document the absent object-storage caller in `specs/004-filesystem-failure-injection/plan.md`
 - [ ] T002 [P] Add operation constants and typed history/rule names to `internal/fsx/fsx.go` with comments documenting the eight supported operation kinds
 
 ---
@@ -66,7 +66,7 @@
 
 - [ ] T016 Implement synchronized ordered history recording before delegation and final outcome capture in `internal/fsx/faulty.go`
 - [ ] T017 Expose copy-safe history snapshots for callers and use them in ordering tests in `internal/fsx/faulty.go` and `internal/fsx/faulty_test.go`
-- [ ] T018 Ensure the filesystem abstraction preserves the required write/sync/rename/directory-sync sequence for future storage callers, with cleanup behavior covered by `internal/app/datadir.go` and `internal/app/datadir_test.go`
+- [ ] T018 Prove the filesystem abstraction can record the required write/sync/rename/directory-sync sequence and expose failure outcomes for future storage callers in `internal/fsx/faulty_test.go`, while preserving current cleanup behavior in `internal/app/datadir.go` and `internal/app/datadir_test.go`
 
 **Checkpoint**: Ordering and failure visibility are independently assertable without inspecting private fake state.
 
@@ -97,9 +97,9 @@
 
 **Purpose**: Final traceability and release readiness.
 
-- [ ] T024 Review all completed tasks against FR-001 through FR-012 and SC-001 through SC-005, then update this file with `[X]` markers in the implementation phase
+- [ ] T024 Review all completed tasks against FR-001 through FR-012 and SC-001 through SC-005, then update `specs/004-filesystem-failure-injection/tasks.md` with `[X]` markers in the implementation phase
 - [ ] T025 Run `gofmt` on changed Go files and inspect `git diff --check` before the feature commit/PR
-- [ ] T026 Verify every feature commit is GPG-signed and record the verified commit IDs in the handoff notes
+- [ ] T026 Verify every feature commit is GPG-signed and record the verified commit IDs in `specs/004-filesystem-failure-injection/quickstart.md`
 
 ---
 

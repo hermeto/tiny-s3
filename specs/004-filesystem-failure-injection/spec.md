@@ -107,6 +107,7 @@ As a maintainer, I can run production with the real operating-system filesystem 
 ## Assumptions
 
 - The feature is internal to the storage engine and does not add a public S3 API or change client-visible success semantics.
+- The current repository does not yet contain the object storage write path; this feature therefore delivers the complete filesystem seam, its real adapter, its fault-injecting fake, and direct sequence/cleanup tests so the storage path can consume the seam without another mocking layer.
 - The existing storage engine's supported filesystem operations define the initial abstraction scope; directory handle close remains governed by the existing design unless the implementation requires exposing it.
 - Path patterns use a deterministic, documented matching rule selected during planning; the recommended default is glob-style matching suitable for temporary and final object paths.
 - Fault rules are test-only configuration and are not enabled by production configuration.

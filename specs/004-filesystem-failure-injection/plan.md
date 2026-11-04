@@ -6,7 +6,7 @@
 
 ## Summary
 
-Extend the existing `internal/fsx` boundary from data-directory probing to the complete set of storage-engine filesystem operations. Add a real OS adapter with identical semantics, a stateful fault-injecting fake with glob path matching, Nth-match rules, short-write results, and ordered operation history, then route the storage engine through it and prove every failure path with TDD. Update the README with the trade-offs and provide a runnable quickstart for the validation gates.
+Extend the existing `internal/fsx` boundary from data-directory probing to the complete set of storage-engine filesystem operations. Add a real OS adapter with identical semantics, a stateful fault-injecting fake with glob path matching, Nth-match rules, short-write results, and ordered operation history, then prove the abstraction's failure and durability-sequence behavior with TDD. The repository has no object storage write path yet, so this feature prepares that seam without inventing a storage package. Update the README with the trade-offs and provide a runnable quickstart for the validation gates.
 
 ## Technical Context
 
