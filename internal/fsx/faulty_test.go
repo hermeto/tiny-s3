@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -244,3 +245,105 @@ func (s stubFS) CreateTemp(string, string) (fsx.File, error) { return s.file, ni
 func (s stubFS) OpenDir(string) (fsx.Dir, error)             { return nil, errors.New("unused") }
 func (s stubFS) Rename(string, string) error                 { return nil }
 func (s stubFS) Remove(string) error                         { return nil }
+func (s stubFS) Open(string) (fsx.ReadFile, error)           { return nil, errors.New("unused") }
+func (s stubFS) ReadDir(string) ([]fs.DirEntry, error)       { return nil, errors.New("unused") }
+
+func TestFaultyReadOperations(t *testing.T) {
+	dir := t.TempDir()
+	name := filepath.Join(dir, "f")
+	if err := os.WriteFile(name, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	errInjected := errors.New("injected")
+
+	t.Run("open", func(t *testing.T) {
+		fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpOpen, PathPattern: name, Err: errInjected})
+		if f, err := fsys.Open(name); !errors.Is(err, errInjected) || f != nil {
+			t.Fatalf("Open = (%v, %v), want injected", f, err)
+		}
+		if _, err := fsys.Open(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Open missing: %v, want ErrNotExist", err)
+		}
+		h := fsys.History()
+		if len(h) != 2 || h[0].Op != fsx.OpOpen || h[0].Path != name || !errors.Is(h[0].Err, errInjected) || h[1].Err == nil {
+			t.Fatalf("history = %#v", h)
+		}
+	})
+
+	t.Run("read and readat", func(t *testing.T) {
+		fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpRead, Nth: 2, Err: errInjected})
+		f, err := fsys.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Name() != name {
+			t.Fatalf("Name = %q", f.Name())
+		}
+		buf := make([]byte, 2)
+		if n, err := f.Read(buf); n != 2 || err != nil || string(buf) != "he" {
+			t.Fatalf("first Read = (%d, %v, %q)", n, err, buf)
+		}
+		if n, err := f.ReadAt(buf, 3); n != 0 || !errors.Is(err, errInjected) {
+			t.Fatalf("ReadAt = (%d, %v), want injected", n, err)
+		}
+		if n, err := f.ReadAt(buf, 3); n != 2 || err != nil || string(buf) != "lo" {
+			t.Fatalf("second ReadAt = (%d, %v, %q)", n, err, buf)
+		}
+		if off, err := f.Seek(0, io.SeekStart); off != 0 || err != nil {
+			t.Fatalf("Seek = (%d, %v)", off, err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		h := fsys.History()
+		want := []string{fsx.OpOpen, fsx.OpRead, fsx.OpRead, fsx.OpRead, fsx.OpClose}
+		if len(h) != len(want) {
+			t.Fatalf("history = %#v", h)
+		}
+		for i, op := range want {
+			if h[i].Op != op {
+				t.Fatalf("history = %#v, want ops %v", h, want)
+			}
+		}
+		if h[1].Requested != 2 || h[1].Written != 2 || h[1].Path != name {
+			t.Fatalf("read record = %#v", h[1])
+		}
+	})
+
+	t.Run("read on fresh handle", func(t *testing.T) {
+		fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpRead, Err: errInjected})
+		f, err := fsys.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if n, err := f.Read(make([]byte, 1)); n != 0 || !errors.Is(err, errInjected) {
+			t.Fatalf("Read = (%d, %v), want injected", n, err)
+		}
+	})
+
+	t.Run("close", func(t *testing.T) {
+		fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpClose, Err: errInjected})
+		f, err := fsys.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); !errors.Is(err, errInjected) {
+			t.Fatalf("Close = %v, want injected", err)
+		}
+	})
+
+	t.Run("readdir", func(t *testing.T) {
+		fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpReadDir, Nth: 2, Err: errInjected})
+		entries, err := fsys.ReadDir(dir)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("ReadDir = (%v, %v)", entries, err)
+		}
+		if entries, err := fsys.ReadDir(dir); !errors.Is(err, errInjected) || entries != nil {
+			t.Fatalf("second ReadDir = (%v, %v), want injected", entries, err)
+		}
+		if h := fsys.History(); len(h) != 2 || h[1].Op != fsx.OpReadDir || h[1].Path != dir {
+			t.Fatalf("history = %#v", h)
+		}
+	})
+}

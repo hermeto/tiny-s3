@@ -130,3 +130,52 @@ func TestFaultyPassesThroughUnderlyingErrors(t *testing.T) {
 		t.Fatal("CreateTemp in a missing dir succeeded")
 	}
 }
+
+func TestOSOpenReadsSeeksAndReadsAt(t *testing.T) {
+	t.Parallel()
+	name := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(name, []byte("hello world"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := fsx.OS{}.Open(name)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close()
+	if f.Name() != name {
+		t.Fatalf("Name = %q, want %q", f.Name(), name)
+	}
+	buf := make([]byte, 5)
+	if n, err := f.Read(buf); n != 5 || err != nil || string(buf) != "hello" {
+		t.Fatalf("Read = (%d, %v, %q)", n, err, buf)
+	}
+	if n, err := f.ReadAt(buf, 6); n != 5 || err != nil || string(buf) != "world" {
+		t.Fatalf("ReadAt = (%d, %v, %q)", n, err, buf)
+	}
+	if off, err := f.Seek(0, 0); off != 0 || err != nil {
+		t.Fatalf("Seek = (%d, %v)", off, err)
+	}
+}
+
+func TestOSOpenMissingFile(t *testing.T) {
+	t.Parallel()
+	f, err := fsx.OS{}.Open(filepath.Join(t.TempDir(), "missing"))
+	if !errors.Is(err, os.ErrNotExist) || f != nil {
+		t.Fatalf("Open missing = (%v, %v), want (nil, ErrNotExist)", f, err)
+	}
+}
+
+func TestOSReadDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fsx.OS{}.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "a" {
+		t.Fatalf("ReadDir = (%v, %v), want [a]", entries, err)
+	}
+	if _, err := (fsx.OS{}).ReadDir(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ReadDir missing: %v, want ErrNotExist", err)
+	}
+}

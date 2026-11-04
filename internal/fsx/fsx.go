@@ -2,6 +2,7 @@
 package fsx
 
 import (
+	"io"
 	"io/fs"
 	"os"
 )
@@ -12,6 +13,15 @@ type File interface {
 	Write([]byte) (int, error)
 	Sync() error
 	Close() error
+}
+
+// ReadFile is a file opened read-only.
+type ReadFile interface {
+	Name() string
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+	io.Closer
 }
 
 // Dir is an open directory.
@@ -28,6 +38,8 @@ type FS interface {
 	OpenDir(path string) (Dir, error)
 	Rename(oldPath, newPath string) error
 	Remove(path string) error
+	Open(path string) (ReadFile, error)
+	ReadDir(path string) ([]fs.DirEntry, error)
 }
 
 // OS implements FS with the os package.
@@ -59,3 +71,15 @@ func (OS) Rename(oldPath, newPath string) error { return os.Rename(oldPath, newP
 
 // Remove calls os.Remove.
 func (OS) Remove(path string) error { return os.Remove(path) }
+
+// Open calls os.Open.
+func (OS) Open(path string) (ReadFile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// ReadDir calls os.ReadDir.
+func (OS) ReadDir(path string) ([]fs.DirEntry, error) { return os.ReadDir(path) }
