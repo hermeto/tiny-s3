@@ -69,14 +69,16 @@ documentation.
   and multipart upload. The multipart upload design is documented in the README only.
 - Everything runs in Docker. Object data lives in a named Docker volume, not a bind mount.
 - The index is held in memory and rebuilt from the durable metadata records at startup.
-- Accepted technical debt: CI (GitHub Actions) and Prometheus metrics are not provided.
-  Adding either is a scope change, not a fix.
+- Accepted technical debt: Prometheus metrics are not provided. Adding them is a scope change,
+  not a fix.
 
 ## Development Workflow
 
 - Each Spec Kit feature is delivered in exactly one pull request, on its own branch.
-- A pull request is mergeable only when `make test`, `make race` and `make cover` pass locally
-  inside the Go container.
+- A pull request is mergeable only when the required CI checks `make vet`, `make test`,
+  `make race`, `make cover` and `docker build` pass. CI runs the same Makefile targets in the
+  same Go container that developers run locally, so a failing check is reproduced with the
+  command it is named after.
 - Every relevant trade-off made in a pull request MUST be recorded in the README design
   section in that same pull request.
 
@@ -90,4 +92,4 @@ documentation.
 - Every plan MUST check compliance with these principles. Any deviation MUST be justified in
   the plan's Complexity Tracking section; an unjustified deviation blocks the pull request.
 
-**Version**: 1.0.0 | **Ratified**: 2026-11-04 | **Last Amended**: 2026-11-04
+**Version**: 1.1.0 | **Ratified**: 2026-11-04 | **Last Amended**: 2026-11-04
