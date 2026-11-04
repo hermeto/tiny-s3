@@ -1,9 +1,9 @@
 # tiny-s3
 
 tiny-s3 is a minimal S3-compatible object store written in Go, with its own storage engine and only the
-standard library in production code. This first version is the skeleton: a server that starts, checks its
-data directory, answers every request with an S3 `NotImplemented` error, and shuts down cleanly. S3 operations
-come in later features.
+standard library in production code. So far it is the server and the S3 protocol layer: it starts, checks its
+data directory, routes path-style S3 requests to their operation, answers in the S3 XML error format, and shuts
+down cleanly. The operations themselves come in later features; until then they answer `501 NotImplemented`.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
 
@@ -11,7 +11,8 @@ Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is n
 
 ```sh
 docker compose up -d --build              # server on localhost:9000, data in the tiny-s3_data volume
-curl -si http://localhost:9000/any/path   # 501 with an S3 XML error body
+curl -si http://localhost:9000/any/path   # 501 NotImplemented with an S3 XML error body
+curl -si -X PATCH http://localhost:9000/b # 405 MethodNotAllowed
 docker compose stop                       # graceful stop, exit code 0
 docker compose down -v                    # remove the container and the data volume
 ```
@@ -37,7 +38,7 @@ s3d [-listen ADDR] [-data-dir PATH]
 On the first SIGTERM or SIGINT, s3d stops accepting connections, closes idle ones, and waits up to 9 seconds
 for in-flight requests before closing the rest. It always exits within 10 seconds. Later signals are ignored
 while it drains. Logs are JSON lines on stdout (`listening`, `shutdown_started`, `shutdown_complete`,
-`shutdown_forced`); startup errors are one plain line on stderr (`s3d: <reason>`).
+`shutdown_forced`, `handler_panic`); startup errors are one plain line on stderr (`s3d: <reason>`).
 
 ## Development
 
@@ -61,8 +62,8 @@ path is a bind mount (`make test GOBUILD_CACHE="$PWD/.tmp/gobuild"`). CI uses th
 runs.
 
 Layout: `cmd/s3d` only handles signals and the exit code; `internal/app` wires everything; `internal/config`
-parses flags; `internal/fsx` is the filesystem layer with fault injection; `internal/s3api` renders S3
-responses; `internal/server` runs the HTTP server and its shutdown.
+parses flags; `internal/fsx` is the filesystem layer with fault injection; `internal/s3api` routes S3
+requests, assigns request IDs and renders S3 errors; `internal/server` runs the HTTP server and its shutdown.
 
 ## CI
 
@@ -214,3 +215,31 @@ Trade-offs made so far, newest feature last.
   `pull_request_target` is not used, so fork pull requests never run with write access.
 - **Anonymous Docker Hub pulls.** No Docker Hub secret is stored. If pull limits start failing runs, add a
   read-only Docker Hub token as a secret and a login step in the gate and image jobs.
+
+### 003 S3 routing and errors
+
+- **Own router, not `http.ServeMux`.** `ServeMux` cleans paths and redirects, which would turn keys such as
+  `a//b`, `./a` or `dir/../x` into other keys, and its patterns cannot match query parameters or headers. The
+  router is one `switch` over method, path shape, subresources and `x-amz-copy-source`; the full table is in
+  `specs/003-s3-routing-errors/contracts/http.md`.
+- **Keys are decoded once, by `net/http`.** Bucket and key come from `r.URL.Path` as is; nothing in the router
+  decodes again. `+` stays `+`, and `a%2Fb` is the same key as `a/b`, as in S3. A request target with invalid
+  percent-encoding never reaches the router: `net/http` answers a plain-text `400` without a request ID. Making
+  it an S3 error would need our own HTTP parser, for a request no real client sends.
+- **501 versus 405.** A real S3 operation the server does not have (a subresource such as `?acl`, ListObjects
+  v1, DeleteBucket, any `POST`, CopyObject) gets `501 NotImplemented`; a method S3 does not support, or one with
+  no meaning on `/`, gets `405 MethodNotAllowed`. A subresource wins over everything, so `GET /b?list-type=2&acl`
+  is `501`. CopyObject is detected by its header so it can never run as a PutObject with an empty body.
+- **Fixed subresource list, other parameters ignored.** Routing looks only for the S3 subresource keys
+  (case-sensitive, on presence). Unknown parameters are ignored, as S3 does, so SDK additions such as `x-id`
+  and presign parameters never block a request. `versionId` and `partNumber` count as subresources: versioning
+  and part reads are out of scope.
+- **Path-style only.** Virtual-hosted-style requests are routed on their path and so reach the wrong bucket;
+  clients must use path-style addressing, which the aws CLI does for `localhost` and IP endpoints.
+- **One request ID per request, set before routing.** Every response carries `x-amz-request-id`, including
+  successes; `WriteError` reuses it, so the header and `RequestId` always match.
+- **Panics become `500 InternalError`.** A panicking operation is logged as `handler_panic` with its request ID.
+  If the response has already started, the connection is aborted instead, so the client sees a failed transfer
+  rather than a truncated success. The writer wrapper that tracks this implements `Unwrap`, so
+  `http.ResponseController` still works for streaming handlers; it does not forward `io.ReaderFrom`, which
+  GetObject can add if sendfile matters.
