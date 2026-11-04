@@ -77,6 +77,10 @@ Expected: both resolve to the same digest; `docker run --rm -p 9000:9000 ghcr.io
 `curl -s localhost:9000/` with the `NotImplemented` XML error. If the package is private, `docker login ghcr.io`
 first. Confirm no package version was created for the earlier branch and pull request runs.
 
+Once `main` has at least two published commits, re-run all jobs of the older successful `main` run. Expected:
+`publish` passes, its log says `not tagging <sha> as latest`, and `latest` still resolves to the newest commit's
+digest (FR-011).
+
 ## 8. Required checks (US4, SC-007)
 
 Follow the README's "Protecting main" steps. Then open a pull request from the step 5 `make test` branch.

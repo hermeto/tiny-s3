@@ -200,7 +200,9 @@ Trade-offs made so far, newest feature last.
   event. Accepted for simplicity; runner minutes are free for public repositories.
 - **`main` runs are serialized, never cancelled.** They finish in push order, so `latest` never moves back to an
   older commit. GitHub keeps only the newest queued run, so when several commits land during a run, the
-  intermediate ones get no SHA tag.
+  intermediate ones get no SHA tag. A manual re-run of an older `main` run is the one case ordering does not
+  cover, so `publish` tags `latest` only when the run's commit is still the tip of `main`; the SHA tag is always
+  pushed.
 - **Publish rebuilds from the layer cache** instead of passing the `docker build` image as an artifact. With a
   warm cache the layers are the ones the check built, without an upload/download round trip. Revisit if spec
   014 needs to run e2e against the exact built image. Provenance metadata includes build timestamps, so a re-run

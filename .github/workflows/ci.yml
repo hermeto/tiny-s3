@@ -115,6 +115,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Concurrency keeps new pushes in order, but a manual re-run of an older
+      # main run would still tag `latest`. Tag it only when this commit is the
+      # tip of main. If main moves after this check, the newer run is queued
+      # behind this one and tags `latest` itself.
+      - id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [[ $tip == "$GITHUB_SHA" ]]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main is at $tip; not tagging $GITHUB_SHA as latest"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Lower-cases the image name and adds OCI labels; the source label links
       # the package to this repository.
       - id: meta
@@ -123,7 +139,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ github.sha }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ steps.tip.outputs.latest }}
 
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

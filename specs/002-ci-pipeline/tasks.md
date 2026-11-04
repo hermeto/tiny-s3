@@ -174,3 +174,9 @@ while sequentially: T011 → T012 → T013 → T014 in .github/workflows/ci.yml
 4. US4 → checks made mandatory.
 
 All of it ships in one PR (constitution: one feature, one PR); the phases are commit boundaries inside that PR.
+
+---
+
+## Phase 8: Convergence
+
+- [X] T022 In job `publish` of `.github/workflows/ci.yml`, add a step before `docker/metadata-action` with `id: tip`, `env: GH_TOKEN: ${{ github.token }}`, that reads the current tip of `main` (`gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha`) and writes `latest=true` to `$GITHUB_OUTPUT` only when it equals `$GITHUB_SHA` (else `latest=false`); change the metadata tag line to `type=raw,value=latest,enable=${{ steps.tip.outputs.latest }}` so a manual re-run of an older `main` run still pushes its SHA tag but never moves `latest` back; comment the residual window (the tip moving after the check is safe because the newer run is queued behind this one and tags `latest` itself); lint with actionlint; add one sentence to the README "002 CI pipeline" design entry on `main` serialization; and extend T021 validation by re-running an older successful `main` run and confirming `latest` still resolves to the newest commit's digest per FR-011 (partial)
