@@ -8,6 +8,12 @@
 
 **Input**: User description: "A filesystem abstraction for tiny-s3 so that every disk operation the storage engine performs can be made to fail on demand in tests. Developers must be able to prove, with unit tests, what happens when creating a file, writing, fsyncing a file, renaming, removing, creating a directory, opening a directory or fsyncing a directory fails, including failures on the Nth call and short writes. Production code uses the real OS filesystem with identical behavior. Tests can inject an error for a specific operation and path pattern, on the Nth matching call. The fake records the sequence of operations, so tests can assert ordering (for example: write, sync, rename, then directory sync). 100% coverage."
 
+## Clarifications
+
+### Session 2026-11-04
+
+- No critical ambiguity required a user question; the recommended defaults already recorded in `Assumptions` and `Decisions Recorded` are adopted for planning and implementation.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Prove storage failure handling (Priority: P1)
