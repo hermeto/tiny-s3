@@ -65,21 +65,21 @@ func TestMainDataDirFailures(t *testing.T) {
 		{
 			name: "mkdirall fails",
 			setup: func(t *testing.T) (string, fsx.FS) {
-				return t.TempDir(), fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpMkdirAll, Err: errBoom}}}
+				return t.TempDir(), &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpMkdirAll, Err: errBoom}}}
 			},
 			wantStderr: func(dir string) string { return "s3d: data dir " + dir + ": boom\n" },
 		},
 		{
 			name: "createtemp fails",
 			setup: func(t *testing.T) (string, fsx.FS) {
-				return t.TempDir(), fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpCreateTemp, Err: errBoom}}}
+				return t.TempDir(), &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpCreateTemp, Err: errBoom}}}
 			},
 			wantStderr: func(dir string) string { return "s3d: data dir " + dir + " not writable: boom\n" },
 		},
 		{
 			name: "close fails",
 			setup: func(t *testing.T) (string, fsx.FS) {
-				return t.TempDir(), fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpClose, Err: errBoom}}}
+				return t.TempDir(), &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpClose, Err: errBoom}}}
 			},
 			wantStderr: func(dir string) string { return "s3d: data dir " + dir + " not writable: boom\n" },
 			probeGone:  true,
@@ -87,7 +87,7 @@ func TestMainDataDirFailures(t *testing.T) {
 		{
 			name: "remove fails",
 			setup: func(t *testing.T) (string, fsx.FS) {
-				return t.TempDir(), fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpRemove, Err: errBoom}}}
+				return t.TempDir(), &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpRemove, Err: errBoom}}}
 			},
 			wantStderr: func(dir string) string { return "s3d: data dir " + dir + " not writable: boom\n" },
 		},

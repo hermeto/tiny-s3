@@ -30,8 +30,21 @@ func TestOS(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if err := fsys.Remove(f.Name()); err != nil {
-		t.Fatalf("Remove: %v", err)
+	if err := fsys.Rename(f.Name(), filepath.Join(dir, "renamed")); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	d, err := fsys.OpenDir(dir)
+	if err != nil {
+		t.Fatalf("OpenDir: %v", err)
+	}
+	if err := d.Sync(); err != nil {
+		t.Fatalf("directory Sync: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("directory Close: %v", err)
+	}
+	if err := fsys.Remove(filepath.Join(dir, "renamed")); err != nil {
+		t.Fatalf("Remove renamed: %v", err)
 	}
 	if _, err := os.Stat(f.Name()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("file still exists after Remove: %v", err)
@@ -84,17 +97,17 @@ func TestFaultyInjectsPerOperation(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 
-			matching := fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: tt.op, PathPrefix: dir, Err: errInjected}}}
+			matching := &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: tt.op, PathPrefix: dir, Err: errInjected}}}
 			if err := tt.run(matching, dir); !errors.Is(err, errInjected) {
 				t.Errorf("matching fault: err = %v, want injected", err)
 			}
 
-			otherPath := fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: tt.op, PathPrefix: "/elsewhere", Err: errInjected}}}
+			otherPath := &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: tt.op, PathPrefix: "/elsewhere", Err: errInjected}}}
 			if err := tt.run(otherPath, dir); err != nil {
 				t.Errorf("fault under another path: err = %v, want pass-through", err)
 			}
 
-			otherOp := fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: "other", Err: errInjected}}}
+			otherOp := &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: "other", Err: errInjected}}}
 			if err := tt.run(otherOp, dir); err != nil {
 				t.Errorf("fault for another op: err = %v, want pass-through", err)
 			}
@@ -104,7 +117,7 @@ func TestFaultyInjectsPerOperation(t *testing.T) {
 
 func TestFaultyEmptyPrefixMatchesAll(t *testing.T) {
 	t.Parallel()
-	fsys := fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpMkdirAll, Err: errInjected}}}
+	fsys := &fsx.Faulty{FS: fsx.OS{}, Faults: []fsx.Fault{{Op: fsx.OpMkdirAll, Err: errInjected}}}
 	if err := fsys.MkdirAll(filepath.Join(t.TempDir(), "x"), 0o750); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want injected", err)
 	}
@@ -112,7 +125,7 @@ func TestFaultyEmptyPrefixMatchesAll(t *testing.T) {
 
 func TestFaultyPassesThroughUnderlyingErrors(t *testing.T) {
 	t.Parallel()
-	fsys := fsx.Faulty{FS: fsx.OS{}}
+	fsys := &fsx.Faulty{FS: fsx.OS{}}
 	if _, err := fsys.CreateTemp(filepath.Join(t.TempDir(), "missing"), "x-*"); err == nil {
 		t.Fatal("CreateTemp in a missing dir succeeded")
 	}

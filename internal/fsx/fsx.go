@@ -1,8 +1,4 @@
 // Package fsx is the filesystem layer every storage I/O call goes through.
-// OS is the real implementation; Faulty wraps any FS to inject errors, so
-// tests exercise I/O failure branches without mocking at call sites
-// (constitution Principle IV). Later features extend FS with Rename, Sync
-// and directory sync.
 package fsx
 
 import (
@@ -10,9 +6,18 @@ import (
 	"os"
 )
 
-// File is an open file.
+// File is an open regular file.
 type File interface {
 	Name() string
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+// Dir is an open directory.
+type Dir interface {
+	Name() string
+	Sync() error
 	Close() error
 }
 
@@ -20,6 +25,8 @@ type File interface {
 type FS interface {
 	MkdirAll(path string, perm fs.FileMode) error
 	CreateTemp(dir, pattern string) (File, error)
+	OpenDir(path string) (Dir, error)
+	Rename(oldPath, newPath string) error
 	Remove(path string) error
 }
 
@@ -33,11 +40,22 @@ func (OS) MkdirAll(path string, perm fs.FileMode) error { return os.MkdirAll(pat
 func (OS) CreateTemp(dir, pattern string) (File, error) {
 	f, err := os.CreateTemp(dir, pattern)
 	if err != nil {
-		// Return a nil interface, not a typed nil *os.File.
 		return nil, err
 	}
 	return f, nil
 }
+
+// OpenDir calls os.Open for a directory.
+func (OS) OpenDir(path string) (Dir, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// Rename calls os.Rename.
+func (OS) Rename(oldPath, newPath string) error { return os.Rename(oldPath, newPath) }
 
 // Remove calls os.Remove.
 func (OS) Remove(path string) error { return os.Remove(path) }
