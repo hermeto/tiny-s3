@@ -84,10 +84,10 @@ internal/storage/
 
 See [research.md](research.md) for rationale and alternatives. Summary:
 
-- **R1 layout**: `<root>/tmp/` for in-flight files, `<root>/data/<version>` for immutable bodies, `<root>/meta/<hex sha256(bucket "/" key)>.json` for records. Bucket names cannot contain `/`, so the hash input is unambiguous, and the hashed name keeps every key inside `meta/`.
+- **R1 layout**: `<root>/tmp/` for in-flight files, `<root>/data/<version>` for immutable bodies, `<root>/meta/<hex sha256(len(bucket) ":" bucket key)>.json` for records. The decimal length prefix makes the hash input unambiguous even though the engine does not validate bucket names, and the hashed name keeps every key inside `meta/`.
 - **R2 commit order**: body temp → sync → close → rename to `data/<version>` → sync `data/` → record temp → sync → close → [lock] read previous record → rename to `meta/` → sync `meta/` → remove previous data (best effort) [unlock].
 - **R3 rollback**: if the `meta/` sync fails after the rename, re-commit the previous record (or remove the new record when there was none), then remove the new data file; the original error is returned, joined with any rollback error.
-- **R4 concurrency**: 64 striped mutexes keyed by the record hash. Commit, Delete and Get's record-read-plus-data-open hold the stripe; Head does not need it because a record rename is atomic.
+- **R4 concurrency**: 64 striped mutexes keyed by the record hash. Commit, Delete, Head and Get's record-read-plus-data-open hold the stripe, so no reader sees a record before its `meta/` sync or one that a rollback is about to undo (found by `/speckit-converge`, T025).
 - **R5 input checks**: copy exactly `size` bytes with `io.CopyBuffer` over an `io.LimitReader`, then probe one more byte; short → IncompleteBody, extra → IncompleteBody. Context cancellation is checked on every read.
 - **R6 flat directories**: no hash fan-out; accepted for the target scale and recorded in the README.
 - **R7 crash leftovers**: `Open` removes everything in `tmp/`. Orphaned `data/` files from a crash between data rename and record commit are invisible and left for the index-rebuild feature.

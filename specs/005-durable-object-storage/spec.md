@@ -113,7 +113,7 @@ As the protocol layer, I can delete a key whether or not it exists and always ge
 - The caller's context is cancelled mid-stream: Put stops, fails, and leaves nothing behind.
 - Removing the temporary file during cleanup also fails: the original error is returned, not the cleanup error.
 - After a successful overwrite, removing the previous version's data fails: the Put still succeeds (the new version is committed) and the leftover is invisible to readers.
-- A metadata record that cannot be decoded is reported as an internal error, not as a missing key.
+- A metadata record that cannot be decoded is reported by Head and Get as an internal error, not as a missing key; Put replaces it and Delete removes it, so the key can be repaired.
 - A short write without an error is treated as a failure, never as a complete write.
 
 ## Requirements *(mandatory)*

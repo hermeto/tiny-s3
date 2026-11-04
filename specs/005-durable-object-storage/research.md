@@ -4,8 +4,8 @@ All decisions below were taken autonomously with the recommended option, as auth
 
 ## R1 — On-disk layout
 
-- **Decision**: `<root>/tmp/`, `<root>/data/<version>`, `<root>/meta/<hex sha256(bucket + "/" + key)>.json`. A version is `crypto/rand.Text()` (26 base32 characters).
-- **Rationale**: Hashing the key makes every key, including `..`, `/` and non-ASCII, map to a fixed-length safe file name inside `meta/` (FR-011). Unique, immutable data files mean an overwrite never touches bytes an open reader holds (FR-008). `tmp/` lives under the same root, so every rename stays on one filesystem.
+- **Decision**: `<root>/tmp/`, `<root>/data/<version>`, `<root>/meta/<hex sha256(len(bucket) ":" bucket key)>.json`. A version is `crypto/rand.Text()` (26 base32 characters).
+- **Rationale**: The decimal length prefix keeps the hash input unambiguous without relying on bucket-name rules the engine does not check (with a plain `bucket/key` join, `a` + `b/c` and `a/b` + `c` would collide; a test caught this during implementation). Hashing the key makes every key, including `..`, `/` and non-ASCII, map to a fixed-length safe file name inside `meta/` (FR-011). Unique, immutable data files mean an overwrite never touches bytes an open reader holds (FR-008). `tmp/` lives under the same root, so every rename stays on one filesystem.
 - **Alternatives**: Key-derived directory trees (path traversal risk, deep trees, case-folding issues on some filesystems); a single file with data plus a metadata trailer (one rename commits, but it reorders the constitution's "rename then metadata record" sequence and needs a deviation).
 
 ## R2 — Commit order and commit point
@@ -22,9 +22,9 @@ All decisions below were taken autonomously with the recommended option, as auth
 
 ## R4 — Concurrency
 
-- **Decision**: 64 `sync.Mutex` stripes chosen by the first byte of the record hash. Commit, Delete, and Get's record read plus data open run under the stripe. Head reads the record without the lock.
-- **Rationale**: Without the lock, two commits could both read the same previous record and orphan one loser's data, and a Get could read a record whose data file a concurrent commit has just removed. Stripes bound memory regardless of key count. A single process owns the data directory (constitution scope), so in-process locks are enough.
-- **Alternatives**: A per-key lock map with reference counts (more code, same guarantee); lock-free Get with retry on `ENOENT` (harder to test deterministically).
+- **Decision**: 64 `sync.Mutex` stripes chosen by the first byte of the record hash. Commit, Delete, Head, and Get's record read plus data open run under the stripe.
+- **Rationale**: Without the lock, two commits could both read the same previous record and orphan one loser's data, a Get could read a record whose data file a concurrent commit has just removed, and a Head could report a version between the commit rename and the `meta/` sync, before it is durable or just before a rollback removes it (added by `/speckit-converge`). Stripes bound memory regardless of key count. A single process owns the data directory (constitution scope), so in-process locks are enough.
+- **Alternatives**: A per-key lock map with reference counts (more code, same guarantee); lock-free Get with retry on `ENOENT` (harder to test deterministically); lock-free Head (sees uncommitted or rolled-back records).
 
 ## R5 — Streaming, length and digest checks
 
@@ -60,6 +60,7 @@ All decisions below were taken autonomously with the recommended option, as auth
 
 - **Decision**: JSON with fields `v` (1), `bucket`, `key`, `size`, `md5`, `last_modified` (RFC 3339 nanoseconds, UTC) and `data` (version). Reads are capped at 64 KiB; undecodable records or `v != 1` → `ErrCorruptRecord`.
 - **Rationale**: Readable on disk, standard library, versioned so content type and user metadata can be added without migration.
+- **Corrupt records**: Head and Get report `ErrCorruptRecord`. Put replaces a corrupt record and Delete removes it, so a damaged key can always be repaired by the client; the corrupt record's data file, if any, becomes an orphan for the index-rebuild feature.
 - **Alternatives**: Binary encoding (no benefit at this size).
 
 ## R11 — Clock

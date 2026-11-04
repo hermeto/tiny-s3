@@ -10,7 +10,7 @@ var (
     ErrEntityTooLarge  // declared size > 5 GiB
     ErrKeyTooLong      // key > 1024 bytes
     ErrInvalidArgument // empty or non-UTF-8 key, negative size
-    ErrCorruptRecord   // metadata record cannot be decoded
+    ErrCorruptRecord   // metadata record cannot be decoded (Head/Get); Put replaces and Delete removes it
 )
 
 const MaxObjectSize = 5 << 30

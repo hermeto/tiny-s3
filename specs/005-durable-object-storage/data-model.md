@@ -10,7 +10,7 @@
 | MD5 | string | 32 lowercase hex characters of the body MD5 |
 | LastModified | time.Time | UTC, time of commit |
 
-## Metadata record (`meta/<hex sha256(bucket "/" key)>.json`)
+## Metadata record (`meta/<hex sha256(len(bucket) ":" bucket key)>.json`)
 
 ```json
 {"v":1,"bucket":"b","key":"k","size":5,"md5":"5d41402abc4b2a76b9719d911017c592","last_modified":"2026-11-04T12:00:00.123456789Z","data":"<version>"}
