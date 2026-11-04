@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -177,7 +178,7 @@ func TestRunForcedShutdown(t *testing.T) {
 	})
 	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: t.TempDir(), ShutdownTimeout: 50 * time.Millisecond}
 	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
-		return run(ctx, cfg, stdout, stderr, fsx.OS{}, h)
+		return run(ctx, cfg, stdout, stderr, fsx.OS{}, func(*slog.Logger) http.Handler { return h })
 	})
 	addr, _ := r.waitFor(t, "listening")["listen"].(string)
 

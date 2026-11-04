@@ -1,57 +1,63 @@
-package s3api_test
+package s3api
 
 import (
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/hermeto/tiny-s3/internal/s3api"
 )
 
-var requestIDPattern = regexp.MustCompile(`^[0-9A-F]{16}$`)
-
-type errorBody struct {
-	XMLName   xml.Name `xml:"Error"`
-	Code      string   `xml:"Code"`
-	Message   string   `xml:"Message"`
-	Resource  string   `xml:"Resource"`
-	RequestID string   `xml:"RequestId"`
-}
-
-func writeError(t *testing.T, path string) (*httptest.ResponseRecorder, errorBody) {
+// parseError checks the XML declaration and decodes an S3 error body.
+func parseError(t *testing.T, raw []byte) errorBody {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.URL.Path = path
-	w := httptest.NewRecorder()
-
-	s3api.WriteError(w, r, http.StatusNotImplemented, "NotImplemented", "not here")
-
-	body := w.Body.String()
-	if !strings.HasPrefix(body, xml.Header) {
-		t.Fatalf("body does not start with the XML header: %q", body)
+	if !strings.HasPrefix(string(raw), xml.Header) {
+		t.Fatalf("body does not start with the XML header: %q", raw)
 	}
 	var e errorBody
-	if err := xml.Unmarshal(w.Body.Bytes(), &e); err != nil {
-		t.Fatalf("unmarshal %q: %v", body, err)
+	if err := xml.Unmarshal(raw, &e); err != nil {
+		t.Fatalf("unmarshal %q: %v", raw, err)
 	}
-	return w, e
+	return e
 }
 
-func TestWriteError(t *testing.T) {
+func TestAPIErrorValues(t *testing.T) {
 	t.Parallel()
 
-	w, e := writeError(t, "/bucket/key")
+	tests := []struct {
+		got     APIError
+		status  int
+		code    string
+		message string
+	}{
+		{ErrNotImplemented, 501, "NotImplemented", "A header or method you provided implies functionality that is not implemented."},
+		{ErrMethodNotAllowed, 405, "MethodNotAllowed", "The specified method is not allowed against this resource."},
+		{ErrInvalidURI, 400, "InvalidURI", "Couldn't parse the specified URI."},
+		{ErrInternalError, 500, "InternalError", "We encountered an internal error. Please try again."},
+	}
+	for _, tt := range tests {
+		if tt.got.Status != tt.status || tt.got.Code != tt.code || tt.got.Message != tt.message {
+			t.Errorf("%s = %+v, want {%d %s %q}", tt.code, tt.got, tt.status, tt.code, tt.message)
+		}
+	}
+}
+
+func TestWriteErrorWithoutContextID(t *testing.T) {
+	t.Parallel()
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.URL.Path = "/bucket/key"
+	w := httptest.NewRecorder()
+	WriteError(w, r, ErrNotImplemented)
 
 	if w.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+		t.Errorf("status = %d, want 501", w.Code)
 	}
 	if got := w.Header().Get("Content-Type"); got != "application/xml" {
 		t.Errorf("Content-Type = %q, want application/xml", got)
 	}
-	if e.Code != "NotImplemented" || e.Message != "not here" || e.Resource != "/bucket/key" {
+	e := parseError(t, w.Body.Bytes())
+	if e.Code != ErrNotImplemented.Code || e.Message != ErrNotImplemented.Message || e.Resource != "/bucket/key" {
 		t.Errorf("body = %+v", e)
 	}
 	if !requestIDPattern.MatchString(e.RequestID) {
@@ -62,13 +68,36 @@ func TestWriteError(t *testing.T) {
 	}
 }
 
-func TestWriteErrorUniqueRequestIDs(t *testing.T) {
+func TestWriteErrorUsesContextID(t *testing.T) {
 	t.Parallel()
 
-	_, first := writeError(t, "/")
-	_, second := writeError(t, "/")
-	if first.RequestID == second.RequestID {
-		t.Fatalf("request IDs repeat: %q", first.RequestID)
+	r := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+	r = r.WithContext(withRequestID(r.Context(), "00000000000000AA"))
+	w := httptest.NewRecorder()
+	WriteError(w, r, ErrMethodNotAllowed)
+
+	e := parseError(t, w.Body.Bytes())
+	if e.RequestID != "00000000000000AA" || w.Header().Get("x-amz-request-id") != "00000000000000AA" {
+		t.Fatalf("RequestId = %q, header = %q, want 00000000000000AA", e.RequestID, w.Header().Get("x-amz-request-id"))
+	}
+}
+
+func TestWriteErrorElementOrder(t *testing.T) {
+	t.Parallel()
+
+	r := httptest.NewRequest(http.MethodGet, "/b", nil)
+	w := httptest.NewRecorder()
+	WriteError(w, r, ErrInvalidURI)
+
+	body := w.Body.String()
+	order := []string{"<Error>", "<Code>", "<Message>", "<Resource>", "<RequestId>", "</Error>"}
+	last := -1
+	for _, tag := range order {
+		i := strings.Index(body, tag)
+		if i <= last {
+			t.Fatalf("%s out of order in %q", tag, body)
+		}
+		last = i
 	}
 }
 
@@ -76,8 +105,33 @@ func TestWriteErrorEscapesResource(t *testing.T) {
 	t.Parallel()
 
 	const path = `/b/k&<>"`
-	_, e := writeError(t, path)
-	if e.Resource != path {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.URL.Path = path
+	w := httptest.NewRecorder()
+	WriteError(w, r, ErrNotImplemented)
+
+	if e := parseError(t, w.Body.Bytes()); e.Resource != path {
 		t.Fatalf("Resource = %q, want %q", e.Resource, path)
+	}
+}
+
+func TestWriteErrorHEADHasNoBody(t *testing.T) {
+	t.Parallel()
+
+	r := httptest.NewRequest(http.MethodHead, "/b/k", nil)
+	w := httptest.NewRecorder()
+	WriteError(w, r, ErrNotImplemented)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", w.Code)
+	}
+	if w.Body.Len() != 0 {
+		t.Errorf("HEAD body = %q, want empty", w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/xml" {
+		t.Errorf("Content-Type = %q, want application/xml", got)
+	}
+	if !requestIDPattern.MatchString(w.Header().Get("x-amz-request-id")) {
+		t.Errorf("x-amz-request-id = %q", w.Header().Get("x-amz-request-id"))
 	}
 }

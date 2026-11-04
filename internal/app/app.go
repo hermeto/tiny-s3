@@ -30,10 +30,14 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, fsys fsx
 	case err != nil:
 		return 2
 	}
-	return run(ctx, cfg, stdout, stderr, fsys, s3api.NewHandler())
+	return run(ctx, cfg, stdout, stderr, fsys, func(log *slog.Logger) http.Handler {
+		return s3api.NewHandler(s3api.Ops{}, log)
+	})
 }
 
-func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys fsx.FS, h http.Handler) int {
+// run builds the logger, then the handler from newHandler, so the handler can
+// log as JSON on the same stream.
+func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys fsx.FS, newHandler func(*slog.Logger) http.Handler) int {
 	log := slog.New(slog.NewJSONHandler(stdout, nil))
 
 	if err := checkDataDir(fsys, cfg.DataDir); err != nil {
@@ -48,7 +52,7 @@ func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys 
 	}
 	log.Info("listening", "listen", ln.Addr().String(), "data_dir", cfg.DataDir)
 
-	if err := server.Run(ctx, ln, h, cfg.ShutdownTimeout, log); err != nil {
+	if err := server.Run(ctx, ln, newHandler(log), cfg.ShutdownTimeout, log); err != nil {
 		fmt.Fprintf(stderr, "s3d: %v\n", err)
 		return 1
 	}
