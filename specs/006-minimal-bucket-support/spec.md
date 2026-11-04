@@ -16,7 +16,7 @@ Answered autonomously with the recommended option, as authorized by the feature 
 
 - Q: Which bucket names are valid? → A: The current S3 rules for general purpose buckets: 3–63 characters; lowercase letters, digits, dots and hyphens; starts and ends with a letter or digit; no two adjacent dots; not formatted as an IPv4 address; not starting with `xn--`, `sthree-` or `amzn-s3-demo-`; not ending with `-s3alias`, `--ol-s3`, `.mrap`, `--x-s3` or `--table-s3`. Legacy us-east-1 names (uppercase, underscores) are not accepted.
 - Q: Is the bucket name checked only on create, or on every request that names a bucket? → A: On every request that names a bucket, before the existence check: an invalid name answers 400 `InvalidBucketName` (status only for HEAD), so a bad name never reads as a missing bucket.
-- Q: What happens when a create request asks for a region other than us-east-1? → A: A create request body naming any location other than us-east-1 (or empty) fails with 400 `InvalidLocationConstraint` and creates nothing; a body that is not a valid create-bucket configuration fails with 400 `MalformedXML`; no body means us-east-1.
+- Q: What happens when a create request asks for a region other than us-east-1? → A: A create request whose body names a location other than us-east-1 fails with 400 `InvalidLocationConstraint` and creates nothing; no body, an empty location or `us-east-1` means us-east-1; a body that is not a valid create-bucket configuration fails with 400 `MalformedXML`.
 - Q: In what order and how many buckets does a list return? → A: All buckets in one response, sorted by name ascending; list filtering and paging parameters are ignored.
 - Q: What does the server do at startup when a stored bucket record cannot be read or is invalid? → A: It refuses to start and reports the offending record, rather than silently hiding a bucket.
 
@@ -107,7 +107,7 @@ As an S3 client user, any object operation I send to a bucket that does not exis
 - **FR-008**: All errors MUST use the S3 error format already used by the server (code, message, request ID).
 - **FR-009**: Concurrent creations of the same bucket MUST result in exactly one success.
 - **FR-010**: Each bucket operation MUST be exercised end to end by the real S3 command-line client (constitution Principle V).
-- **FR-011**: A create request MUST be rejected with 400 `InvalidLocationConstraint` when its body names a location other than us-east-1 (an empty location also counts), and with 400 `MalformedXML` when the body cannot be parsed; a create without a body creates the bucket in us-east-1.
+- **FR-011**: A create request MUST be rejected with 400 `InvalidLocationConstraint` when its body names a location other than us-east-1, and with 400 `MalformedXML` when the body cannot be parsed; a create with no body, no location or an empty location creates the bucket in us-east-1.
 - **FR-012**: Listing buckets MUST return all buckets in one response, sorted by name ascending.
 - **FR-013**: At startup the server MUST load every stored bucket and MUST refuse to start, naming the record, when one cannot be read or is invalid.
 
