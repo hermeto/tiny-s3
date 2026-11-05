@@ -209,9 +209,10 @@ func TestMainObjectOpsNeedBucket(t *testing.T) {
 	// Implemented operations answer for real (the PUT creates demo/k, so
 	// GET finds it); the rest answer NotImplemented until their feature.
 	implemented := map[string]int{
-		http.MethodPut:  http.StatusOK,
-		http.MethodGet:  http.StatusOK,
-		http.MethodHead: http.StatusOK,
+		http.MethodPut:    http.StatusOK,
+		http.MethodGet:    http.StatusOK,
+		http.MethodHead:   http.StatusOK,
+		http.MethodDelete: http.StatusNoContent,
 	}
 	for _, op := range objectOps {
 		want, ok := implemented[op.method]

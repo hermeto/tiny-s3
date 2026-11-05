@@ -20,6 +20,7 @@ type ObjectStore interface {
 	Put(ctx context.Context, bucket, key string, body io.Reader, size int64, opts storage.PutOptions) (storage.Info, error)
 	Get(bucket, key string) (storage.Info, storage.Reader, error)
 	Head(bucket, key string) (storage.Info, error)
+	Delete(bucket, key string) error
 }
 
 // PutObjectOp returns the PutObject operation served by store. Every header
@@ -114,6 +115,19 @@ func startObjectResponse(w http.ResponseWriter, r *http.Request, info storage.In
 	}
 	w.WriteHeader(http.StatusOK)
 	return 0, info.Size, r.Method == http.MethodGet
+}
+
+// DeleteObjectOp returns the DeleteObject operation served by store. It
+// answers 204 whether or not the key existed, and only after the engine made
+// the removal durable. Conditional headers are ignored.
+func DeleteObjectOp(store ObjectStore, log *slog.Logger) Op {
+	return func(w http.ResponseWriter, r *http.Request, t Target) {
+		if err := store.Delete(t.Bucket, t.Key); err != nil {
+			WriteError(w, r, storageError(log, r, "DeleteObject", t, err))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // readErrRecorder remembers a read error, to tell a storage failure from a
