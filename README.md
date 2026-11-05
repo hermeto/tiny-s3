@@ -3,8 +3,9 @@
 tiny-s3 is a minimal S3-compatible object store written in Go, with its own storage engine and only the
 standard library in production code. So far it is the server, the S3 protocol layer, the storage engine and
 bucket support: it starts, checks its data directory, routes path-style S3 requests to their operation, creates,
-checks and lists buckets durably, answers in the S3 XML error format, and shuts down cleanly. Object operations
-answer `404 NoSuchBucket` on a missing bucket and `501 NotImplemented` otherwise, until their features land.
+checks and lists buckets durably, stores objects durably with PutObject, answers in the S3 XML error format, and
+shuts down cleanly. The other object operations answer `404 NoSuchBucket` on a missing bucket and
+`501 NotImplemented` otherwise, until their features land.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
 
@@ -16,6 +17,9 @@ export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-e
 aws --endpoint-url http://localhost:9000 s3api create-bucket --bucket demo   # {"Location": "/demo"}
 aws --endpoint-url http://localhost:9000 s3api head-bucket --bucket demo     # 200, BucketRegion us-east-1
 aws --endpoint-url http://localhost:9000 s3api list-buckets                  # demo with its CreationDate
+printf 'hello world' > hello.txt
+aws --endpoint-url http://localhost:9000 s3api put-object --bucket demo --key a/b.txt --body hello.txt \
+  --content-type text/plain --metadata owner=alice   # "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\""
 curl -si http://localhost:9000/missing/key # 404 NoSuchBucket with an S3 XML error body
 curl -si -X PATCH http://localhost:9000/b  # 405 MethodNotAllowed
 docker compose stop                       # graceful stop, exit code 0
@@ -296,7 +300,7 @@ Trade-offs made so far, newest feature last.
   the index-rebuild feature, which has to read every record anyway.
 - **Flat directories.** `data/` and `meta/` have no hash fan-out. ext4 and XFS index large directories, and
   the record format names its data file, so fan-out can come later without a migration.
-- **Not wired to HTTP yet.** The engine has no S3 object endpoint in this feature; the PutObject feature maps its
+- **Not wired to HTTP in this feature.** The engine had no S3 object endpoint here; the PutObject feature maps its
   errors (IncompleteBody, BadDigest, EntityTooLarge, KeyTooLongError, NoSuchKey) to S3 responses and adds the
   `aws s3api` e2e tests.
 
@@ -341,3 +345,27 @@ Trade-offs made so far, newest feature last.
 - **Real aws CLI in `make e2e`.** The e2e image is the official `amazon/aws-cli` image pinned by digest, with the
   Go tree copied from the same pinned golang image as every other target, so there is still one toolchain
   definition. CI does not run `make e2e` yet: adding it is a new required check and a ruleset change.
+
+### 007 PutObject
+
+- **Every header check before the first body read.** Bucket gate, aws-chunked, length, `Content-MD5` format and
+  metadata size are checked, and the engine validates key length and object size, before the body is touched. A
+  client sending `Expect: 100-continue` (the aws CLI does) therefore never uploads a body that will be rejected.
+- **Content type and user metadata in the existing record.** The record keeps format version 1 and gains two
+  optional fields; older records read as `binary/octet-stream` with no metadata, so no migration. Metadata names
+  are lowercased, repeated headers are joined with `,`, and names plus values are limited to 2 KB, as in S3.
+  Other standard headers (Cache-Control, Content-Disposition, Expires) are not stored.
+- **Early disconnect is `IncompleteBody`.** net/http reports a body shorter than its `Content-Length` as
+  `io.ErrUnexpectedEOF`; the engine maps it to `IncompleteBody`, and the S3 layer maps a cancelled request context
+  the same way. Both fail before the commit, so nothing is stored and the temp file is removed. The client is
+  usually gone and never sees the 400; the status matters for logs and half-closed connections.
+- **aws-chunked is refused, not stored.** Until feature 008 decodes it, a `Content-Encoding: aws-chunked` or
+  `STREAMING-*` upload answers `501 NotImplemented`, because storing the chunk framing would corrupt the object.
+  Over plain HTTP the aws CLI 2.31 sends ordinary bodies (checked with a capture), so the default CLI works.
+- **Checksum and signature headers are ignored for now.** The CLI sends `x-amz-checksum-crc64nvme` and a hex
+  `X-Amz-Content-SHA256`; feature 008 owns checksums. SigV4 is out of scope.
+- **One mapping from engine errors to S3 errors.** Bucket and object operations share it; errors with no S3
+  meaning answer `500 InternalError` and are logged as `storage_error` with the request ID, bucket and key (006's
+  `bucket_error` log was renamed).
+- **Flat memory proven at 2 GiB on the real binary.** An e2e test streams a generated 2 GiB body and checks the
+  server's peak RSS (`VmHWM`) stays below 64 MiB, on top of the engine's 64 MiB allocation test.
