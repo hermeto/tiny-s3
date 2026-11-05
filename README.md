@@ -4,7 +4,7 @@ tiny-s3 is a minimal S3-compatible object store written in Go, with its own stor
 standard library in production code. So far it is the server, the S3 protocol layer, the storage engine and
 bucket support: it starts, checks its data directory, routes path-style S3 requests to their operation, creates,
 checks and lists buckets durably, stores objects durably with PutObject and reads them back with GetObject and
-HeadObject, answers in the S3 XML error format, and shuts down cleanly. The remaining object operations answer
+HeadObject (whole or as a byte range), answers in the S3 XML error format, and shuts down cleanly. The remaining object operations answer
 `404 NoSuchBucket` on a missing bucket and `501 NotImplemented` otherwise, until their features land.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
@@ -22,6 +22,7 @@ aws --endpoint-url http://localhost:9000 s3api put-object --bucket demo --key a/
   --content-type text/plain --metadata owner=alice   # "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\""
 aws --endpoint-url http://localhost:9000 s3api get-object --bucket demo --key a/b.txt out.txt   # out.txt = hello.txt
 aws --endpoint-url http://localhost:9000 s3api head-object --bucket demo --key a/b.txt          # same headers, no body
+aws --endpoint-url http://localhost:9000 s3api get-object --bucket demo --key a/b.txt --range bytes=0-4 part.txt   # "hello"
 curl -si http://localhost:9000/missing/key # 404 NoSuchBucket with an S3 XML error body
 curl -si -X PATCH http://localhost:9000/b  # 405 MethodNotAllowed
 docker compose stop                       # graceful stop, exit code 0
@@ -415,3 +416,20 @@ Trade-offs made so far, newest feature last.
   and unquoted ETags are accepted. A missing key is 404 whatever the conditions. Not `http.ServeContent`: its
   errors are not S3 XML and its range rules differ from S3's (feature 010).
 - **Not supported**: `response-*` query overrides, checksum headers (not stored, 008), versions.
+
+### 010 range requests
+
+- **S3's single-range rules, not `http.ServeContent`.** One range (`first-last`, `first-`, `-suffix`) answers 206
+  with `Content-Range`; an end past the object is clamped and a suffix longer than the object returns it all. A
+  start at or past the end, `bytes=-0`, or any range on an empty object is `416 InvalidRange` with
+  `Content-Range: bytes */size`. Multiple ranges and malformed headers return the whole object with 200, because
+  S3 does; `ServeContent` would answer multipart/byteranges.
+- **Order.** Key lookup (404), then the 009 conditions (412/304), then `If-Range`, then `Range`. A non-matching
+  `If-Range` (other or weak ETag, other date, garbage) returns the whole object, even when the range would be
+  unsatisfiable.
+- **HEAD honors `Range`** with the same status and headers as GET, as S3 does.
+- **Same streaming path as full downloads.** An `io.SectionReader` over the engine's reader goes through the fixed
+  32 KiB buffer and the abort-after-status rule; the 2 GiB e2e test also fetches its second half as a range with
+  peak RSS below 64 MiB.
+- **The 416 body is the standard error body**, without S3's extra `RangeRequested` and `ActualObjectSize`
+  elements; clients read the code and `Content-Range`.

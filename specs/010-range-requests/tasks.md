@@ -31,25 +31,25 @@ No setup needed.
 
 ## Phase 4: User Story 2 - Unsatisfiable ranges (Priority: P1)
 
-- [ ] T008 [P] [US2] Write failing handler tests in `internal/s3api/get_test.go`: `bytes=N-`, `bytes=-0` and any range on an empty object → 416 `InvalidRange` with `Content-Range: bytes */N` (HEAD without body); 412/304 from 009 conditions win over the range
-- [ ] T009 [US2] Answer unsatisfiable ranges in `internal/s3api/object.go`
-- [ ] T010 [US2] Add to `e2e/range_test.go`: `--range bytes=<size>-` → `(InvalidRange)`
+- [X] T008 [P] [US2] Write failing handler tests in `internal/s3api/get_test.go`: `bytes=N-`, `bytes=-0` and any range on an empty object → 416 `InvalidRange` with `Content-Range: bytes */N` (HEAD without body); 412/304 from 009 conditions win over the range
+- [X] T009 [US2] Answer unsatisfiable ranges in `internal/s3api/object.go`
+- [X] T010 [US2] Add to `e2e/range_test.go`: `--range bytes=<size>-` → `(InvalidRange)`
 
 ---
 
 ## Phase 5: User Story 3 - Ranges S3 ignores (Priority: P2)
 
-- [ ] T011 [P] [US3] Write failing handler tests in `internal/s3api/get_test.go`: multiple and malformed ranges → 200 whole object without `Content-Range`; `If-Range` stale ETag, weak ETag or other date → 200; current ETag or date → 206
-- [ ] T012 [US3] Apply `If-Range` in GET and HEAD in `internal/s3api/object.go`
-- [ ] T013 [US3] Add to `e2e/range_test.go`: CLI multiple and malformed ranges return the whole object; Go-client `If-Range` stale → 200 and current → 206; extend the 2 GiB test in `e2e/objects_test.go` with `bytes=1073741824-` (1 GiB, MD5 of the second half, peak RSS below 64 MiB)
+- [X] T011 [P] [US3] Write failing handler tests in `internal/s3api/get_test.go`: multiple and malformed ranges → 200 whole object without `Content-Range`; `If-Range` stale ETag, weak ETag or other date → 200; current ETag or date → 206
+- [X] T012 [US3] Apply `If-Range` in GET and HEAD in `internal/s3api/object.go`
+- [X] T013 [US3] Add to `e2e/range_test.go`: CLI multiple and malformed ranges return the whole object; Go-client `If-Range` stale → 200 and current → 206; extend the 2 GiB test in `e2e/objects_test.go` with `bytes=1073741824-` (1 GiB, MD5 of the second half, peak RSS below 64 MiB)
 
 ---
 
 ## Phase 6: Polish
 
-- [ ] T014 Add the `### 010 range requests` design section to `README.md` and update the intro and quick start
-- [ ] T015 Run `make vet test race cover e2e`; 100% for every `internal/` package
-- [ ] T016 Run `quickstart.md` against `docker compose up -d --build`, then `docker compose down -v`
+- [X] T014 Add the `### 010 range requests` design section to `README.md` and update the intro and quick start
+- [X] T015 Run `make vet test race cover e2e`; 100% for every `internal/` package
+- [X] T016 Run `quickstart.md` against `docker compose up -d --build`, then `docker compose down -v`
 
 ## Dependencies & Execution Order
 
@@ -73,3 +73,9 @@ Parser first, then serve ranges (MVP), then 416, then the cases S3 ignores.
 | C1 | LOW | The edge case "`bytes=0-` answers 206, not 200" had no task. | Added to T005. |
 
 No constitution conflicts. Coverage: FR-001–FR-009 and SC-001–SC-003 each map to at least one task (100%).
+
+## Implementation Notes (2026-11-05)
+
+- T011's multiple and malformed cases passed before T012, because the parser from T004 already ignores them; the `If-Range` cases were red until T012.
+- Extending the 2 GiB test showed its pattern reader depended on read sizes; it now derives each byte from its position, so the second half can be regenerated for the range check.
+- A flaky e2e test from 008 (half-closing complete framed uploads made net/http cancel them) was fixed on this branch in its own commit.
