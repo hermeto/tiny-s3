@@ -79,16 +79,19 @@ func (x *objectIndex) remove(bucket, key string) {
 	}
 }
 
-// loadIndex rebuilds the index from meta/. A record that cannot be decoded,
-// or sits under a file name that is not its key's hash, is skipped: Head and
-// Get keep reporting it and Put and Delete repair it, as for any corrupt
-// record. Entries that are not records are skipped. I/O errors fail.
-func (s *Store) loadIndex() error {
+// loadIndex rebuilds the index from meta/ and returns the bodies the indexed
+// records name. bodies is the set of files in data/. A record that cannot be
+// decoded, sits under a file name that is not its key's hash, or names a body
+// that is missing is skipped and counted: Head and Get keep reporting it and
+// Put and Delete repair it, as for any corrupt record. Entries that are not
+// records are ignored. I/O errors fail.
+func (s *Store) loadIndex(bodies map[string]bool) (map[string]bool, error) {
 	dir := filepath.Join(s.root, metaDir)
 	des, err := s.fsys.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("storage: list %s: %w", dir, err)
+		return nil, fmt.Errorf("storage: list %s: %w", dir, err)
 	}
+	referenced := make(map[string]bool, len(des))
 	for _, de := range des {
 		name, ok := strings.CutSuffix(de.Name(), ".json")
 		if !ok {
@@ -99,13 +102,17 @@ func (s *Store) loadIndex() error {
 		case errors.Is(err, ErrCorruptRecord), errors.Is(err, ErrNoSuchKey):
 			// ErrNoSuchKey: an entry that cannot be opened as a file,
 			// such as a dangling link.
+			s.recovery.RecordsSkipped++
 			continue
 		case err != nil:
-			return err
-		case recordName(rec.Bucket, rec.Key) != name:
+			return nil, err
+		case recordName(rec.Bucket, rec.Key) != name, !bodies[rec.Data]:
+			s.recovery.RecordsSkipped++
 			continue
 		}
 		s.index.put(rec.Bucket, rec.Key, entryOf(rec.info()))
+		referenced[rec.Data] = true
+		s.recovery.ObjectsIndexed++
 	}
-	return nil
+	return referenced, nil
 }
