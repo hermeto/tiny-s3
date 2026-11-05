@@ -75,11 +75,17 @@ Every target runs in a digest-pinned `golang:1.27.3` container. Module and build
 | `make race` | `go test -race ./...` |
 | `make vet` | `go vet -tags e2e ./...` |
 | `make cover` | `scripts/cover-gate.sh`: fails unless every package under `internal/` has tests and 100% statement coverage |
-| `make e2e` | Builds the `tiny-s3-e2e` image (`e2e/Dockerfile`: AWS CLI v2 plus the pinned Go toolchain), then builds the real `s3d` binary and drives it with real signals and the real `aws s3api` CLI (`e2e/`, build tag `e2e`, about 15 s) |
+| `make e2e` | Three steps, about 4 minutes: the Go tests in `e2e/` (build tag `e2e`), which build the real `s3d` binary and drive it with real signals and the real `aws s3api` CLI from the `tiny-s3-e2e` image (`e2e/Dockerfile`: AWS CLI v2, `cmp` and the pinned Go toolchain); the container suite `scripts/e2e/run.sh`, which runs the image built from `Dockerfile` on a fresh volume and checks every operation with the CLI, including a SIGKILL during uploads; and `scripts/demo.sh` without pauses |
+| `make shellcheck` | shellcheck (pinned image) over `scripts/` |
 | `make clean-cache` | Removes the cache volumes |
 
-A pull request is mergeable when the CI checks below pass (see `.specify/memory/constitution.md`). Run the
-same targets locally before pushing, and `make e2e` too.
+A pull request is mergeable when the required CI checks below pass (see `.specify/memory/constitution.md`). Run
+the same targets locally before pushing.
+
+For a live walkthrough, `bash scripts/demo.sh` narrates ten steps (upload, download, ranges, folders, a SIGKILL
+mid-upload and the recovery that follows, deletes) and pauses before each; `DEMO_PAUSE=0` runs it straight
+through. Like the suite, it uses its own network, volume and containers (`tiny-s3-e2e-<pid>-*`), publishes no
+port, and removes everything when it ends, even on Ctrl-C.
 
 To use other cache locations, set `GOMOD_CACHE` and `GOBUILD_CACHE`: a bare name is a Docker volume, an absolute
 path is a bind mount (`make test GOBUILD_CACHE="$PWD/.tmp/gobuild"`). CI uses this to save the caches between
@@ -103,12 +109,13 @@ Each check is named after the command that reproduces it locally:
 | `make race` | `make race` |
 | `make cover` | `make cover` |
 | `docker build` | `docker build .` |
+| `make e2e` | `make e2e` |
 
 The checks run in parallel and independently, so one failure does not hide another. A new push to a branch
 cancels that branch's run still in progress. Go module and build caches, and the image layer cache, are saved
 from `main` and restored by every run.
 
-On a push to `main`, once all five checks pass, a `publish` job pushes the image to
+On a push to `main`, once every check passes (including `make e2e`), a `publish` job pushes the image to
 `ghcr.io/hermeto/tiny-s3`, tagged with the full commit SHA and `latest` (linux/amd64):
 
 ```sh
@@ -130,7 +137,8 @@ done once.
 3. Enable Restrict deletions and Block force pushes.
 4. Enable Require a pull request before merging (0 required approvals works for a single maintainer).
 5. Enable Require status checks to pass, tick Require branches to be up to date before merging, and add
-   `make vet`, `make test`, `make race`, `make cover` and `docker build` with GitHub Actions as the source.
+   `make vet`, `make test`, `make race`, `make cover`, `docker build` and `make e2e` with GitHub Actions as the
+   source. (`make e2e` runs on every push and pull request either way; making it required is this step.)
    A check appears in the picker once it has run at least once in the last week.
 6. Save.
 
@@ -159,7 +167,8 @@ gh api --method POST repos/hermeto/tiny-s3/rulesets --input - <<'EOF'
           { "context": "make test", "integration_id": 15368 },
           { "context": "make race", "integration_id": 15368 },
           { "context": "make cover", "integration_id": 15368 },
-          { "context": "docker build", "integration_id": 15368 } ] } }
+          { "context": "docker build", "integration_id": 15368 },
+          { "context": "make e2e", "integration_id": 15368 } ] } }
   ]
 }
 EOF
@@ -356,7 +365,7 @@ Trade-offs made so far, newest feature last.
   added without changing the store.
 - **Real aws CLI in `make e2e`.** The e2e image is the official `amazon/aws-cli` image pinned by digest, with the
   Go tree copied from the same pinned golang image as every other target, so there is still one toolchain
-  definition. CI does not run `make e2e` yet: adding it is a new required check and a ruleset change.
+  definition. CI runs `make e2e` since feature 014.
 
 ### 007 PutObject
 
@@ -509,3 +518,29 @@ Trade-offs made so far, newest feature last.
   an empty `tmp/` (e2e).
 - **Not checked at startup**: body checksums (reading every byte would make startup proportional to the data).
   Bodies are complete by construction: they are renamed into `data/` only after a full, synced write.
+
+### 014 end-to-end suite and demo
+
+- **Three layers in one command.** `make e2e` runs the Go tests of the binary (process behavior the image cannot
+  show: signals, raw protocol, peak memory), then a container suite against the image built from the
+  `Dockerfile` (the shipped artifact), then the demo without pauses so it cannot rot. Each step fails the target.
+- **The suite is isolated.** Every run has its own network, volume and containers named `tiny-s3-e2e-<pid>-*`, no
+  published port, and a trap that removes them on success, failure, Ctrl-C or SIGTERM. A running Compose stack
+  keeps serving during a run (checked). The checks run in a client container (the e2e image) through `docker
+  exec`; an inspector container mounts the volume read-only to look at `tmp/` and `data/`.
+- **The real CLI with its defaults**, except where a check needs otherwise: 2,500 keys are uploaded with `aws s3
+  cp --recursive` for speed (every check uses `aws s3api`), and the crash test's in-flight uploads are throttled.
+- **A crash test that cannot pass by luck.** Ten `put-object` uploads finish and are acknowledged; ten more go
+  through `aws s3 cp` throttled to 4 MB/s (single part, no retries), so they are mid-body for about 8 s. The host
+  kills the server only once all ten fast ones are acknowledged and at least five slow ones hold temp files, then
+  requires the restart's `recovery` line to report removed temp files, every acknowledged key listed, every listed
+  key equal to its source with a matching ETag, and one body per object. Earlier drafts let the kill land with
+  nothing in flight; the test now fails if that happens.
+- **Proven to catch breakage.** With the PutObject ETag deliberately broken (not committed), the suite exits 1
+  with `FAIL object/put-small` and the expected and actual ETags.
+- **`cmp` from the client image's own distribution.** The aws-cli image lacks `cmp`; `e2e/Dockerfile` installs
+  `diffutils-3.8-1.amzn2023.0.2`, an exact version from Amazon Linux 2023's release-locked repositories.
+- **CI**: a `make e2e` job (30-minute timeout) on every push and pull request; `publish` now waits for it.
+  Making it a required check is an admin's ruleset change; the command above includes it.
+- **Shell scripts** use `set -euo pipefail`, stay Bash 3.2 compatible on the host side (macOS), and pass
+  `make shellcheck`.
