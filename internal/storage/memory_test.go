@@ -32,7 +32,7 @@ func TestPutMemoryIsBounded(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	info, err := s.Put(context.Background(), "b", "big", &patternReader{n: size}, size, nil)
+	info, err := s.Put(context.Background(), "b", "big", &patternReader{n: size}, size, PutOptions{})
 	runtime.ReadMemStats(&after)
 	if err != nil || info.Size != size {
 		t.Fatalf("Put = (%+v, %v)", info, err)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ const (
 
 // putString stores body under b/k through s.
 func putString(s *Store, body string) (Info, error) {
-	return s.Put(context.Background(), "b", "k", strings.NewReader(body), int64(len(body)), nil)
+	return s.Put(context.Background(), "b", "k", strings.NewReader(body), int64(len(body)), PutOptions{})
 }
 
 func TestPutHistoryFollowsDurabilityOrder(t *testing.T) {
@@ -121,7 +122,7 @@ func TestPutFailsCleanlyAtEveryStep(t *testing.T) {
 				clean := reopen(t, root)
 				head, err := clean.Head("b", "k")
 				switch {
-				case overwrite && (err != nil || head != prev):
+				case overwrite && (err != nil || !reflect.DeepEqual(head, prev)):
 					t.Fatalf("Head = (%+v, %v), want previous %+v", head, err, prev)
 				case !overwrite && !errors.Is(err, ErrNoSuchKey):
 					t.Fatalf("Head = (%+v, %v), want ErrNoSuchKey", head, err)

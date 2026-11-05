@@ -165,8 +165,8 @@ func TestMainCreatesBucket(t *testing.T) {
 }
 
 // TestMainObjectOpsNeedBucket drives every object operation through Main with
-// a real store: NoSuchBucket on a missing bucket, NotImplemented (the object
-// features come later) once the bucket exists.
+// a real store: NoSuchBucket on a missing bucket, and once the bucket exists
+// the operation itself (NotImplemented for those not built yet).
 func TestMainObjectOpsNeedBucket(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -206,15 +206,70 @@ func TestMainObjectOpsNeedBucket(t *testing.T) {
 	if status, _ := send(http.MethodPut, "/demo"); status != http.StatusOK {
 		t.Fatalf("create = %d", status)
 	}
+	// PutObject exists since feature 007; the others come later.
 	for _, op := range objectOps {
-		if status, _ := send(op.method, op.path); status != http.StatusNotImplemented {
-			t.Fatalf("%s %s on an existing bucket = %d, want 501", op.method, op.path, status)
+		want := http.StatusNotImplemented
+		if op.method == http.MethodPut {
+			want = http.StatusOK
+		}
+		if status, _ := send(op.method, op.path); status != want {
+			t.Fatalf("%s %s on an existing bucket = %d, want %d", op.method, op.path, status, want)
 		}
 	}
 
 	r.cancel()
 	if c := r.code(t); c != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+}
+
+func TestMainPutObject(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
+		return Main(ctx, []string{"-listen=127.0.0.1:0", "-data-dir=" + dir}, stdout, stderr, fsx.OS{})
+	})
+	base := "http://" + r.waitFor(t, "listening")["listen"].(string)
+
+	send := func(path, body string, header http.Header) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, base+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range header {
+			req.Header[k] = v
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp
+	}
+	if resp := send("/demo", "", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("create = %d", resp.StatusCode)
+	}
+	header := http.Header{"Content-Type": {"text/plain"}, "X-Amz-Meta-Owner": {"alice"}, "X-Amz-Meta-Team": {"core"}}
+	resp := send("/demo/a/b.txt", "hello world", header)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"5eb63bbbe01eeed093cb22bb8f5acdc3"` {
+		t.Fatalf("put = %d, ETag %q", resp.StatusCode, resp.Header.Get("ETag"))
+	}
+	r.cancel()
+	if c := r.code(t); c != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+
+	store, err := storage.Open(fsx.OS{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := store.Head("demo", "a/b.txt")
+	if err != nil || info.Size != 11 || info.MD5 != "5eb63bbbe01eeed093cb22bb8f5acdc3" {
+		t.Fatalf("Head = %+v, %v", info, err)
+	}
+	if info.ContentType != "text/plain" || len(info.Metadata) != 2 || info.Metadata["owner"] != "alice" || info.Metadata["team"] != "core" {
+		t.Fatalf("stored type %q, metadata %v", info.ContentType, info.Metadata)
 	}
 }
 

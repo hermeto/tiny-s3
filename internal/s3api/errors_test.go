@@ -39,6 +39,14 @@ func TestAPIErrorValues(t *testing.T) {
 		{ErrBucketAlreadyOwnedByYou, 409, "BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded and you already own it."},
 		{ErrMalformedXML, 400, "MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema."},
 		{ErrInvalidLocationConstraint, 400, "InvalidLocationConstraint", "The specified location constraint is not valid."},
+		{ErrMissingContentLength, 411, "MissingContentLength", "You must provide the Content-Length HTTP header."},
+		{ErrInvalidDigest, 400, "InvalidDigest", "The Content-MD5 you specified is not valid."},
+		{ErrMetadataTooLarge, 400, "MetadataTooLarge", "Your metadata headers exceed the maximum allowed metadata size."},
+		{ErrKeyTooLong, 400, "KeyTooLongError", "Your key is too long."},
+		{ErrEntityTooLarge, 400, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed size."},
+		{ErrIncompleteBody, 400, "IncompleteBody", "You did not provide the number of bytes specified by the Content-Length HTTP header."},
+		{ErrBadDigest, 400, "BadDigest", "The Content-MD5 you specified did not match what we received."},
+		{ErrInvalidArgument, 400, "InvalidArgument", "Invalid Argument"},
 	}
 	for _, tt := range tests {
 		if tt.got.Status != tt.status || tt.got.Code != tt.code || tt.got.Message != tt.message {

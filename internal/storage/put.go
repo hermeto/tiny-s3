@@ -17,10 +17,9 @@ import (
 const copyBufferSize = 32 << 10
 
 // Put streams exactly size bytes from body into the store under bucket/key and
-// returns the committed metadata. contentMD5 is the raw 16-byte digest the
-// client sent, or nil. Put returns only after the body and the metadata record
-// are durable.
-func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, contentMD5 []byte) (Info, error) {
+// returns the committed metadata. Put returns only after the body and the
+// metadata record are durable.
+func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, opts PutOptions) (Info, error) {
 	if err := validateKey(key); err != nil {
 		return Info{}, err
 	}
@@ -28,13 +27,17 @@ func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, siz
 		return Info{}, err
 	}
 	version := rand.Text()
-	sum, err := s.writeData(ctx, body, size, contentMD5, s.dataPath(version))
+	sum, err := s.writeData(ctx, body, size, opts.ContentMD5, s.dataPath(version))
 	if err != nil {
 		return Info{}, err
 	}
 	rec := record{
 		V: recordVersion, Bucket: bucket, Key: key, Size: size,
 		MD5: hex.EncodeToString(sum), LastModified: s.now().UTC(), Data: version,
+		ContentType: opts.ContentType, Metadata: opts.Metadata,
+	}
+	if rec.ContentType == "" {
+		rec.ContentType = DefaultContentType
 	}
 	tmp, err := s.writeRecord(rec)
 	if err != nil {
@@ -99,6 +102,10 @@ func (s *Store) writeData(ctx context.Context, body io.Reader, size int64, conte
 func copyBody(w io.Writer, r io.Reader, size int64) error {
 	buf := make([]byte, copyBufferSize)
 	n, err := io.CopyBuffer(w, io.LimitReader(r, size), buf)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		// net/http's answer to a body that ends before its Content-Length.
+		return ErrIncompleteBody
+	}
 	if err != nil {
 		return fmt.Errorf("storage: copy body: %w", err)
 	}

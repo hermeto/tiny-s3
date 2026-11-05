@@ -42,6 +42,26 @@ var (
 		"The specified location constraint is not valid."}
 )
 
+// Errors produced by the object operations.
+var (
+	ErrMissingContentLength = APIError{http.StatusLengthRequired, "MissingContentLength",
+		"You must provide the Content-Length HTTP header."}
+	ErrInvalidDigest = APIError{http.StatusBadRequest, "InvalidDigest",
+		"The Content-MD5 you specified is not valid."}
+	ErrMetadataTooLarge = APIError{http.StatusBadRequest, "MetadataTooLarge",
+		"Your metadata headers exceed the maximum allowed metadata size."}
+	ErrKeyTooLong = APIError{http.StatusBadRequest, "KeyTooLongError",
+		"Your key is too long."}
+	ErrEntityTooLarge = APIError{http.StatusBadRequest, "EntityTooLarge",
+		"Your proposed upload exceeds the maximum allowed size."}
+	ErrIncompleteBody = APIError{http.StatusBadRequest, "IncompleteBody",
+		"You did not provide the number of bytes specified by the Content-Length HTTP header."}
+	ErrBadDigest = APIError{http.StatusBadRequest, "BadDigest",
+		"The Content-MD5 you specified did not match what we received."}
+	ErrInvalidArgument = APIError{http.StatusBadRequest, "InvalidArgument",
+		"Invalid Argument"}
+)
+
 // errorBody is the S3 XML error document. Field order is element order.
 type errorBody struct {
 	XMLName   xml.Name `xml:"Error"`

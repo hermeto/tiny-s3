@@ -56,6 +56,10 @@ const (
 	MaxKeyLength = 1024
 )
 
+// DefaultContentType is the content type of an object stored without one,
+// as in S3.
+const DefaultContentType = "binary/octet-stream"
+
 // Info is the metadata of a committed object.
 type Info struct {
 	Bucket       string
@@ -63,6 +67,18 @@ type Info struct {
 	Size         int64
 	MD5          string    // lowercase hex
 	LastModified time.Time // UTC
+	ContentType  string
+	Metadata     map[string]string // user metadata; nil when there is none
+}
+
+// PutOptions are the optional inputs of Put.
+type PutOptions struct {
+	// ContentMD5 is the raw 16-byte digest the client sent, or nil.
+	ContentMD5 []byte
+	// ContentType is stored as is; empty stores DefaultContentType.
+	ContentType string
+	// Metadata is the user metadata to store; it replaces any previous one.
+	Metadata map[string]string
 }
 
 // Reader is an open, immutable object body. It keeps yielding the version it
