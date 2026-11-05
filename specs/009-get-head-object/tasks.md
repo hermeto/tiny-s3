@@ -71,3 +71,14 @@ No setup needed.
 ## Implementation Strategy
 
 GET first (MVP), then HEAD, conditionals, and the large/concurrent proofs.
+
+## Analysis Remediation (2026-11-04)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| I1 | MEDIUM | US4 AC2 says the key is overwritten and then deleted during a download, but HTTP DeleteObject is feature 011, so the e2e test (T015) can only overwrite. | Spec Assumptions state that the delete is proved through the engine in T014 and that 011 extends the e2e test. |
+| C1 | LOW | The 006 tests that expect `NotImplemented` for GET/HEAD on an existing bucket would turn red after T005/T008. | Already part of T005, T006 and T008; no change. |
+
+No constitution conflicts. Coverage: FR-001–FR-011 and SC-001–SC-004 each map to at least one task (100%).

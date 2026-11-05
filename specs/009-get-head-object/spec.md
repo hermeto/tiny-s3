@@ -128,3 +128,4 @@ As an operator, downloads of any size use a fixed amount of server memory, and a
 - `response-*` query parameters (overriding response headers) are out of scope.
 - Checksums supplied at upload are not stored (feature 008), so no checksum headers are returned.
 - No versioning: there is one current version per key.
+- DeleteObject over HTTP is feature 011. Until then, a delete during a download is proved with the storage engine's delete at the handler level; feature 011 adds the HTTP delete to the end-to-end test.
