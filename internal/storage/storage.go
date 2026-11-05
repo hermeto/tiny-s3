@@ -79,6 +79,10 @@ type PutOptions struct {
 	ContentType string
 	// Metadata is the user metadata to store; it replaces any previous one.
 	Metadata map[string]string
+	// Verify, when set, is called once the whole body is read and its MD5
+	// checked, before anything is synced or committed. An error fails the
+	// Put; it is returned wrapped.
+	Verify func() error
 }
 
 // Reader is an open, immutable object body. It keeps yielding the version it

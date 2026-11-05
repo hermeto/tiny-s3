@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -195,14 +196,16 @@ func TestPutObjectRejectsBeforeReadingBody(t *testing.T) {
 		length int64
 		want   APIError
 	}{
-		"aws-chunked encoding":   {http.Header{"Content-Encoding": {"aws-chunked"}}, 10, ErrNotImplemented},
-		"aws-chunked with gzip":  {http.Header{"Content-Encoding": {"aws-chunked,gzip"}}, 10, ErrNotImplemented},
-		"streaming content hash": {http.Header{"X-Amz-Content-Sha256": {"STREAMING-UNSIGNED-PAYLOAD-TRAILER"}}, 10, ErrNotImplemented},
-		"streaming signed":       {http.Header{"X-Amz-Content-Sha256": {"STREAMING-AWS4-HMAC-SHA256-PAYLOAD"}}, 10, ErrNotImplemented},
-		"no length":              {nil, -1, ErrMissingContentLength},
-		"md5 not base64":         {http.Header{"Content-Md5": {"not base64!"}}, 10, ErrInvalidDigest},
-		"md5 wrong length":       {http.Header{"Content-Md5": {"AAAA"}}, 10, ErrInvalidDigest},
-		"metadata too large":     {http.Header{"X-Amz-Meta-K": {strings.Repeat("v", 2048)}}, 10, ErrMetadataTooLarge},
+		"framed without decoded length":    {http.Header{"Content-Encoding": {"aws-chunked"}}, 10, ErrMissingContentLength},
+		"streaming without decoded length": {http.Header{"X-Amz-Content-Sha256": {"STREAMING-UNSIGNED-PAYLOAD-TRAILER"}}, -1, ErrMissingContentLength},
+		"decoded length not a number":      {http.Header{"Content-Encoding": {"aws-chunked"}, "X-Amz-Decoded-Content-Length": {"ten"}}, 10, ErrInvalidArgument},
+		"decoded length negative":          {http.Header{"Content-Encoding": {"aws-chunked"}, "X-Amz-Decoded-Content-Length": {"-1"}}, 10, ErrInvalidArgument},
+		"two checksums":                    {http.Header{"X-Amz-Checksum-Crc32": {"DUoRhQ=="}, "X-Amz-Checksum-Sha1": {"Kq5sNclPz7QV2+lfQIuc6R7oRu0="}}, 10, ErrInvalidRequest},
+		"bad checksum header":              {http.Header{"X-Amz-Checksum-Crc32": {"nope"}}, 10, ErrInvalidRequest},
+		"no length":                        {nil, -1, ErrMissingContentLength},
+		"md5 not base64":                   {http.Header{"Content-Md5": {"not base64!"}}, 10, ErrInvalidDigest},
+		"md5 wrong length":                 {http.Header{"Content-Md5": {"AAAA"}}, 10, ErrInvalidDigest},
+		"metadata too large":               {http.Header{"X-Amz-Meta-K": {strings.Repeat("v", 2048)}}, 10, ErrMetadataTooLarge},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -316,4 +319,191 @@ func TestPutObjectLimitsBeforeReadingBody(t *testing.T) {
 		r.ContentLength = tt.length
 		wantError(t, serveReq(h, r), http.MethodPut, tt.want)
 	}
+}
+
+const cliStream = "b\r\nhello world\r\n0\r\nx-amz-checksum-crc64nvme:jSnVw/bqjr4=\r\n\r\n"
+
+// framedReq builds an aws-chunked PUT of stream as an HTTP chunked request
+// (ContentLength -1), the way the aws CLI sends it over HTTPS.
+func framedReq(target, stream string, header http.Header) *http.Request {
+	r := httptest.NewRequest(http.MethodPut, target, strings.NewReader(stream))
+	r.ContentLength = -1
+	r.Header.Set("Content-Encoding", "aws-chunked")
+	r.Header.Set("X-Amz-Content-Sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
+	r.Header.Set("X-Amz-Decoded-Content-Length", "11")
+	r.Header.Set("X-Amz-Trailer", "x-amz-checksum-crc64nvme")
+	for k, v := range header {
+		r.Header[k] = v
+	}
+	return r
+}
+
+func TestPutObjectFramed(t *testing.T) {
+	t.Parallel()
+	sig := ";chunk-signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	tests := map[string]struct {
+		stream string
+		header http.Header
+		length int64
+	}{
+		"unsigned trailer":              {cliStream, nil, -1},
+		"content length of the framing": {cliStream, nil, int64(len(cliStream))},
+		"gzip too":                      {cliStream, http.Header{"Content-Encoding": {"aws-chunked,gzip"}}, -1},
+		"only the streaming hash":       {cliStream, http.Header{"Content-Encoding": nil}, -1},
+		"signed": {"5" + sig + "\r\nhello\r\n6" + sig + "\r\n world\r\n0" + sig + "\r\n\r\n",
+			http.Header{"X-Amz-Content-Sha256": {"STREAMING-AWS4-HMAC-SHA256-PAYLOAD"}, "X-Amz-Trailer": nil}, -1},
+		"signed trailer": {"b" + sig + "\r\nhello world\r\n0" + sig + "\r\nx-amz-checksum-crc32:DUoRhQ==\r\nx-amz-trailer-signature:00\r\n\r\n",
+			http.Header{"X-Amz-Content-Sha256": {"STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"}, "X-Amz-Trailer": {"x-amz-checksum-crc32"}}, -1},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv, store, _ := realStoreServer(t)
+			_ = srv
+			h := NewHandler(Ops{PutObject: PutObjectOp(store, discardLogger())}, discardLogger())
+			r := framedReq("/demo/k", tt.stream, tt.header)
+			r.ContentLength = tt.length
+			w := serveReq(h, r)
+			if w.Code != http.StatusOK || w.Header().Get("ETag") != `"5eb63bbbe01eeed093cb22bb8f5acdc3"` {
+				t.Fatalf("got %d %q, ETag %q", w.Code, w.Body.String(), w.Header().Get("ETag"))
+			}
+			info, rd, err := store.Get("demo", "k")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rd.Close()
+			got, _ := io.ReadAll(rd)
+			if string(got) != "hello world" || info.Size != 11 {
+				t.Fatalf("stored %q (size %d)", got, info.Size)
+			}
+		})
+	}
+}
+
+func TestPutObjectPlainChecksumHeader(t *testing.T) {
+	t.Parallel()
+	store := &fakeObjects{}
+	h, _ := objectHandler(store)
+	w := serveReq(h, putReq("/demo/k", "hello world", http.Header{"X-Amz-Checksum-Crc64nvme": {"jSnVw/bqjr4="}}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if c := store.taken()[0]; string(c.body) != "hello world" || c.opts.Verify == nil || c.opts.Verify() != nil {
+		t.Fatalf("call = %+v", c)
+	}
+}
+
+// realHandler serves PutObjectOp over a fresh real store.
+func realHandler(t *testing.T) (http.Handler, *storage.Store, string) {
+	t.Helper()
+	_, store, root := realStoreServer(t)
+	return NewHandler(Ops{PutObject: PutObjectOp(store, discardLogger())}, discardLogger()), store, root
+}
+
+// assertUnchanged checks that demo/k still holds "previous" and that no
+// temp file is left.
+func assertUnchanged(t *testing.T, store *storage.Store, root string) {
+	t.Helper()
+	_, rd, err := store.Get("demo", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rd.Close()
+	if got, _ := io.ReadAll(rd); string(got) != "previous" {
+		t.Fatalf("object = %q, want previous", got)
+	}
+	if des, err := os.ReadDir(filepath.Join(root, "tmp")); err != nil || len(des) != 0 {
+		t.Fatalf("tmp = %v (%v), want empty", des, err)
+	}
+}
+
+func seedPrevious(t *testing.T, h http.Handler) {
+	t.Helper()
+	if w := serveReq(h, putReq("/demo/k", "previous", nil)); w.Code != http.StatusOK {
+		t.Fatalf("seed: %d", w.Code)
+	}
+}
+
+func TestPutObjectChecksumMismatch(t *testing.T) {
+	t.Parallel()
+	wrong := map[string]string{
+		"x-amz-checksum-crc32":     "AAAAAA==",
+		"x-amz-checksum-crc32c":    "AAAAAA==",
+		"x-amz-checksum-crc64nvme": "AAAAAAAAAAA=",
+		"x-amz-checksum-sha1":      base64.StdEncoding.EncodeToString(make([]byte, 20)),
+		"x-amz-checksum-sha256":    base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	}
+	for name, value := range wrong {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h, store, root := realHandler(t)
+			seedPrevious(t, h)
+			stream := "b\r\nhello world\r\n0\r\n" + name + ":" + value + "\r\n\r\n"
+			w := serveReq(h, framedReq("/demo/k", stream, http.Header{"X-Amz-Trailer": {name}}))
+			wantError(t, w, http.MethodPut, ErrBadChecksum)
+			if msg := parseError(t, w.Body.Bytes()).Message; msg != ErrBadChecksum.Message {
+				t.Fatalf("message %q", msg)
+			}
+			assertUnchanged(t, store, root)
+
+			// The same value as a header on a plain upload.
+			wantError(t, serveReq(h, putReq("/demo/k", "hello world", http.Header{http.CanonicalHeaderKey(name): {value}})), http.MethodPut, ErrBadDigest)
+			assertUnchanged(t, store, root)
+		})
+	}
+}
+
+func TestPutObjectInvalidTrailer(t *testing.T) {
+	t.Parallel()
+	tests := map[string]*http.Request{
+		"bad trailer value":       framedReq("/demo/k", "b\r\nhello world\r\n0\r\nx-amz-checksum-crc64nvme:AAAA\r\n\r\n", nil),
+		"trailer never arrives":   framedReq("/demo/k", "b\r\nhello world\r\n0\r\n\r\n", nil),
+		"trailer on a plain body": putReq("/demo/k", "hello world", http.Header{"X-Amz-Trailer": {"x-amz-checksum-crc32"}}),
+	}
+	for name, r := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h, store, root := realHandler(t)
+			seedPrevious(t, h)
+			wantError(t, serveReq(h, r), http.MethodPut, ErrInvalidRequest)
+			assertUnchanged(t, store, root)
+		})
+	}
+}
+
+func TestPutObjectMalformedStreams(t *testing.T) {
+	t.Parallel()
+	noTrailer := http.Header{"X-Amz-Trailer": nil}
+	tests := map[string]struct {
+		stream string
+		header http.Header
+		want   APIError
+	}{
+		"truncated":      {"b\r\nhello wo", noTrailer, ErrIncompleteBody},
+		"no final line":  {"b\r\nhello world\r\n0\r\n", noTrailer, ErrIncompleteBody},
+		"bad chunk size": {"zz\r\nhello world\r\n0\r\n\r\n", noTrailer, ErrInvalidRequest},
+		"long line":      {strings.Repeat("0", 4100) + "b\r\nhello world\r\n0\r\n\r\n", noTrailer, ErrInvalidRequest},
+		"fewer bytes":    {"5\r\nhello\r\n0\r\n\r\n", noTrailer, ErrIncompleteBody},
+		"more bytes":     {"c\r\nhello world!\r\n0\r\n\r\n", noTrailer, ErrIncompleteBody},
+		"missing crlf":   {"b\r\nhello worldXX0\r\n\r\n", noTrailer, ErrInvalidRequest},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h, store, root := realHandler(t)
+			seedPrevious(t, h)
+			wantError(t, serveReq(h, framedReq("/demo/k", tt.stream, tt.header)), http.MethodPut, tt.want)
+			assertUnchanged(t, store, root)
+		})
+	}
+}
+
+func TestPutObjectFramedLimitsBeforeReadingBody(t *testing.T) {
+	t.Parallel()
+	h, _, _ := realHandler(t)
+	r := httptest.NewRequest(http.MethodPut, "/demo/k", unreadBody{t})
+	r.ContentLength = -1
+	r.Header.Set("Content-Encoding", "aws-chunked")
+	r.Header.Set("X-Amz-Decoded-Content-Length", strconv.FormatInt(storage.MaxObjectSize+1, 10))
+	wantError(t, serveReq(h, r), http.MethodPut, ErrEntityTooLarge)
 }

@@ -27,7 +27,7 @@ func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, siz
 		return Info{}, err
 	}
 	version := rand.Text()
-	sum, err := s.writeData(ctx, body, size, opts.ContentMD5, s.dataPath(version))
+	sum, err := s.writeData(ctx, body, size, opts.ContentMD5, opts.Verify, s.dataPath(version))
 	if err != nil {
 		return Info{}, err
 	}
@@ -53,7 +53,7 @@ func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, siz
 // writeData streams the body into a temp file, checks its length and digest,
 // syncs it, renames it to dst and syncs data/. It returns the body's MD5. On
 // any error, every file it created is removed.
-func (s *Store) writeData(ctx context.Context, body io.Reader, size int64, contentMD5 []byte, dst string) (sum []byte, err error) {
+func (s *Store) writeData(ctx context.Context, body io.Reader, size int64, contentMD5 []byte, verify func() error, dst string) (sum []byte, err error) {
 	f, err := s.fsys.CreateTemp(filepath.Join(s.root, tmpDir), "put-*")
 	if err != nil {
 		return nil, fmt.Errorf("storage: create temp: %w", err)
@@ -77,6 +77,11 @@ func (s *Store) writeData(ctx context.Context, body io.Reader, size int64, conte
 	sum = h.Sum(nil)
 	if contentMD5 != nil && !bytes.Equal(sum, contentMD5) {
 		return nil, ErrBadDigest
+	}
+	if verify != nil {
+		if err := verify(); err != nil {
+			return nil, fmt.Errorf("storage: verify body: %w", err)
+		}
 	}
 	if err := f.Sync(); err != nil {
 		return nil, fmt.Errorf("storage: sync %s: %w", f.Name(), err)

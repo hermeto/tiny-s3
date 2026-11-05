@@ -318,3 +318,38 @@ func TestPutUnexpectedEOFIsIncompleteBody(t *testing.T) {
 		}
 	}
 }
+
+func TestPutVerify(t *testing.T) {
+	t.Parallel()
+	s, root := newStore(t, nil)
+	prev := put(t, s, "b", "k", []byte("previous"))
+
+	calls := 0
+	errVerify := errors.New("verify failed")
+	r := strings.NewReader("new body")
+	opts := PutOptions{Verify: func() error {
+		calls++
+		if r.Len() != 0 {
+			t.Error("Verify called before the body was read")
+		}
+		return errVerify
+	}}
+	if _, err := s.Put(context.Background(), "b", "k", r, 8, opts); !errors.Is(err, errVerify) {
+		t.Fatalf("Put = %v, want the Verify error", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Verify called %d times, want 1", calls)
+	}
+	if head, err := s.Head("b", "k"); err != nil || !reflect.DeepEqual(head, prev) {
+		t.Fatalf("Head = %+v, %v; want the previous object", head, err)
+	}
+	if tmp, data := entries(t, root, "tmp"), entries(t, root, "data"); len(tmp) != 0 || len(data) != 1 {
+		t.Fatalf("tmp = %v, data = %v; want empty and the previous version only", tmp, data)
+	}
+
+	// A passing Verify commits.
+	opts.Verify = func() error { return nil }
+	if _, err := s.Put(context.Background(), "b", "k", strings.NewReader("new body"), 8, opts); err != nil {
+		t.Fatal(err)
+	}
+}

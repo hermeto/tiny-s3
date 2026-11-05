@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/hermeto/tiny-s3/internal/awschunked"
 	"github.com/hermeto/tiny-s3/internal/storage"
 )
 
@@ -24,6 +25,12 @@ var storageErrors = []struct {
 	// The request context ends when the client goes away mid-upload.
 	{context.Canceled, ErrIncompleteBody},
 	{storage.ErrInvalidArgument, ErrInvalidArgument},
+	// Client checksums, verified by PutOptions.Verify (feature 008).
+	{errChecksumMismatch, ErrBadChecksum},
+	{errInvalidChecksum, ErrInvalidRequest},
+	// aws-chunked framing (feature 008).
+	{awschunked.ErrMalformed, ErrInvalidRequest},
+	{awschunked.ErrTruncated, ErrIncompleteBody},
 }
 
 // storageError returns the S3 error for err, a storage engine error from op

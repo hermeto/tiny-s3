@@ -47,6 +47,8 @@ func TestAPIErrorValues(t *testing.T) {
 		{ErrIncompleteBody, 400, "IncompleteBody", "You did not provide the number of bytes specified by the Content-Length HTTP header."},
 		{ErrBadDigest, 400, "BadDigest", "The Content-MD5 you specified did not match what we received."},
 		{ErrInvalidArgument, 400, "InvalidArgument", "Invalid Argument"},
+		{ErrInvalidRequest, 400, "InvalidRequest", "Invalid Request"},
+		{ErrBadChecksum, 400, "BadDigest", "The checksum you specified did not match the calculated checksum."},
 	}
 	for _, tt := range tests {
 		if tt.got.Status != tt.status || tt.got.Code != tt.code || tt.got.Message != tt.message {

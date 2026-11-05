@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hermeto/tiny-s3/internal/awschunked"
 	"github.com/hermeto/tiny-s3/internal/storage"
 )
 
@@ -28,6 +29,10 @@ func TestStorageError(t *testing.T) {
 		{storage.ErrIncompleteBody, ErrIncompleteBody},
 		{wrap(context.Canceled), ErrIncompleteBody},
 		{fmt.Errorf("%w: empty key", storage.ErrInvalidArgument), ErrInvalidArgument},
+		{wrap(errChecksumMismatch), ErrBadChecksum},
+		{wrap(errInvalidChecksum), ErrInvalidRequest},
+		{wrap(awschunked.ErrMalformed), ErrInvalidRequest},
+		{wrap(awschunked.ErrTruncated), ErrIncompleteBody},
 	}
 	for _, tt := range tests {
 		logs := &logBuffer{}
