@@ -34,6 +34,8 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, fsys fsx
 	return run(ctx, cfg, stdout, stderr, fsys, func(log *slog.Logger, store *storage.Store) http.Handler {
 		ops := s3api.BucketOps(store, log)
 		ops.PutObject = s3api.PutObjectOp(store, log)
+		ops.GetObject = s3api.GetObjectOp(store, log)
+		ops.HeadObject = s3api.HeadObjectOp(store, log)
 		return s3api.NewHandler(ops, log)
 	})
 }

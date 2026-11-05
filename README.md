@@ -3,9 +3,9 @@
 tiny-s3 is a minimal S3-compatible object store written in Go, with its own storage engine and only the
 standard library in production code. So far it is the server, the S3 protocol layer, the storage engine and
 bucket support: it starts, checks its data directory, routes path-style S3 requests to their operation, creates,
-checks and lists buckets durably, stores objects durably with PutObject, answers in the S3 XML error format, and
-shuts down cleanly. The other object operations answer `404 NoSuchBucket` on a missing bucket and
-`501 NotImplemented` otherwise, until their features land.
+checks and lists buckets durably, stores objects durably with PutObject and reads them back with GetObject and
+HeadObject, answers in the S3 XML error format, and shuts down cleanly. The remaining object operations answer
+`404 NoSuchBucket` on a missing bucket and `501 NotImplemented` otherwise, until their features land.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
 
@@ -20,6 +20,8 @@ aws --endpoint-url http://localhost:9000 s3api list-buckets                  # d
 printf 'hello world' > hello.txt
 aws --endpoint-url http://localhost:9000 s3api put-object --bucket demo --key a/b.txt --body hello.txt \
   --content-type text/plain --metadata owner=alice   # "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\""
+aws --endpoint-url http://localhost:9000 s3api get-object --bucket demo --key a/b.txt out.txt   # out.txt = hello.txt
+aws --endpoint-url http://localhost:9000 s3api head-object --bucket demo --key a/b.txt          # same headers, no body
 curl -si http://localhost:9000/missing/key # 404 NoSuchBucket with an S3 XML error body
 curl -si -X PATCH http://localhost:9000/b  # 405 MethodNotAllowed
 docker compose stop                       # graceful stop, exit code 0
@@ -392,3 +394,24 @@ Trade-offs made so far, newest feature last.
 - **Content-Encoding is not stored.** An `aws-chunked,gzip` upload stores the gzip payload, and reading it back will
   not say it is gzip. Storing Content-Encoding would come with the other standard headers.
 - **Unsigned hex `X-Amz-Content-SHA256` is not checked.** It is part of SigV4, which stays out of scope.
+
+### 009 GetObject and HeadObject
+
+- **Reads come from the engine's immutable versions.** `Get` opens the data file under the key lock (005), so a
+  download that started keeps its version through overwrites and deletes; tests prove it at the handler level
+  (engine overwrite and delete) and end to end (HTTP overwrite while a download is half read).
+- **A failure after the status aborts the connection.** Once `200` and `Content-Length` are sent, a read error or a
+  client write error ends with `http.ErrAbortHandler`, so the client sees a broken transfer, never a short success.
+  Read errors are logged as `storage_error`; a client that leaves is not an error.
+- **One 32 KiB copy buffer per download.** The reader is wrapped so `io.CopyBuffer` uses it rather than the file's
+  `WriteTo`; the 2 GiB e2e test also downloads the object and keeps peak RSS below 64 MiB. This gives up sendfile;
+  it can come back by forwarding `io.ReaderFrom` through the handler's response writer.
+- **User metadata names go out in lowercase.** `Header.Set` would canonicalize `x-amz-meta-owner` to
+  `X-Amz-Meta-Owner`, and clients keep the case they receive as the metadata key; S3 sends lowercase, so the
+  headers are written without canonicalization (found by the aws CLI e2e test).
+- **Conditional requests in the HTTP order S3 follows.** `If-Match`, else `If-Unmodified-Since` (412); then
+  `If-None-Match`, else `If-Modified-Since` (304), so S3's documented special cases fall out of the order. Dates
+  compare in whole seconds, the precision of `Last-Modified`; unparseable dates are ignored; ETag lists, `*`, weak
+  and unquoted ETags are accepted. A missing key is 404 whatever the conditions. Not `http.ServeContent`: its
+  errors are not S3 XML and its range rules differ from S3's (feature 010).
+- **Not supported**: `response-*` query overrides, checksum headers (not stored, 008), versions.

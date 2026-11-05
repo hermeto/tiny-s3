@@ -206,11 +206,17 @@ func TestMainObjectOpsNeedBucket(t *testing.T) {
 	if status, _ := send(http.MethodPut, "/demo"); status != http.StatusOK {
 		t.Fatalf("create = %d", status)
 	}
-	// PutObject exists since feature 007; the others come later.
+	// Implemented operations answer for real (the PUT creates demo/k, so
+	// GET finds it); the rest answer NotImplemented until their feature.
+	implemented := map[string]int{
+		http.MethodPut:  http.StatusOK,
+		http.MethodGet:  http.StatusOK,
+		http.MethodHead: http.StatusOK,
+	}
 	for _, op := range objectOps {
-		want := http.StatusNotImplemented
-		if op.method == http.MethodPut {
-			want = http.StatusOK
+		want, ok := implemented[op.method]
+		if !ok || op.path == "/demo?list-type=2" {
+			want = http.StatusNotImplemented
 		}
 		if status, _ := send(op.method, op.path); status != want {
 			t.Fatalf("%s %s on an existing bucket = %d, want %d", op.method, op.path, status, want)

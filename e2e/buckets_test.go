@@ -188,9 +188,9 @@ func TestObjectOpsOnMissingBucketCLI(t *testing.T) {
 	mustFail(t, p.addr, "(NoSuchBucket)", "list-objects-v2", "--bucket", "missing")
 	mustFail(t, p.addr, "(404)", "head-object", "--bucket", "missing", "--key", "k")
 
-	// Once the bucket exists the gate lets requests through; GetObject
-	// itself comes with a later feature.
+	// Once the bucket exists the gate lets requests through to the
+	// operation itself.
 	mustSucceed(t, p.addr, "create-bucket", "--bucket", "demo")
-	mustFail(t, p.addr, "(NotImplemented)", "get-object", "--bucket", "demo", "--key", "k", out)
+	mustFail(t, p.addr, "(NoSuchKey)", "get-object", "--bucket", "demo", "--key", "k", out)
 	p.stop(t)
 }
