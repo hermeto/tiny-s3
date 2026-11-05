@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// TestListPageTiming checks SC-004 (012): a 1,000-key page from a bucket of
-// 10,000 keys within 100 ms.
+// TestListPageTiming checks the engine half of SC-004 (012): a 1,000-key page
+// from a bucket of 10,000 keys within 50 ms. The HTTP half (encoding the page,
+// also 50 ms) is internal/s3api TestListResponseTiming.
 func TestListPageTiming(t *testing.T) {
 	s, _ := newStore(t, nil)
 	for i := range 10000 {
@@ -20,7 +21,7 @@ func TestListPageTiming(t *testing.T) {
 	}
 	start := time.Now()
 	r := s.List("b", ListOptions{After: "key-04999", MaxKeys: 1000})
-	if elapsed := time.Since(start); elapsed > 100*time.Millisecond || len(r.Objects) != 1000 {
-		t.Fatalf("listed %d keys in %v, want 1000 within 100ms", len(r.Objects), elapsed)
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond || len(r.Objects) != 1000 {
+		t.Fatalf("listed %d keys in %v, want 1000 within 50ms", len(r.Objects), elapsed)
 	}
 }
