@@ -42,9 +42,10 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, fsys fsx
 	})
 }
 
-// run builds the logger, opens the store, then builds the handler from
-// newHandler, so the handler can log as JSON on the same stream. The store is
-// open, with every bucket loaded, before the port is.
+// run builds the logger, opens the store (which recovers it from any crash),
+// logs what recovery did, then builds the handler from newHandler, so the
+// handler can log as JSON on the same stream. The store is open, with every
+// bucket and object indexed, before the port is.
 func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys fsx.FS, newHandler func(*slog.Logger, *storage.Store) http.Handler) int {
 	log := slog.New(slog.NewJSONHandler(stdout, nil))
 
@@ -58,6 +59,13 @@ func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys 
 		fmt.Fprintf(stderr, "s3d: %v\n", err)
 		return 1
 	}
+	rec := store.Recovery()
+	log.Info("recovery",
+		"tmp_removed", rec.TmpRemoved,
+		"orphans_removed", rec.OrphansRemoved,
+		"objects_indexed", rec.ObjectsIndexed,
+		"records_skipped", rec.RecordsSkipped,
+		"buckets", rec.Buckets)
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {

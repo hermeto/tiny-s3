@@ -280,6 +280,52 @@ func TestMainPutObject(t *testing.T) {
 	}
 }
 
+// TestMainLogsRecovery prepares a data dir with leftovers and checks the
+// recovery line: first on stdout, before listening, with every count.
+func TestMainLogsRecovery(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := storage.Open(fsx.OS{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateBucket("demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), "demo", "k", strings.NewReader("x"), 1, storage.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"tmp/put-1", "tmp/meta-2", "data/orphan"} {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(f)), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
+		return Main(ctx, []string{"-listen=127.0.0.1:0", "-data-dir=" + dir}, stdout, stderr, fsx.OS{})
+	})
+	var first map[string]any
+	select {
+	case first = <-r.lines:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no output")
+	}
+	want := map[string]float64{"tmp_removed": 2, "orphans_removed": 1, "objects_indexed": 1, "records_skipped": 0, "buckets": 1}
+	if first["msg"] != "recovery" || first["level"] != "INFO" {
+		t.Fatalf("first line %v, want the recovery line", first)
+	}
+	for k, v := range want {
+		if first[k] != v {
+			t.Fatalf("recovery %s = %v, want %v (line %v)", k, first[k], v, first)
+		}
+	}
+	r.waitFor(t, "listening")
+	r.cancel()
+	if c := r.code(t); c != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+}
+
 func TestMainStorageOpenFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

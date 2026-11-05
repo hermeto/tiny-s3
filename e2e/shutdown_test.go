@@ -67,6 +67,7 @@ type proc struct {
 	stderr *syncBuffer
 	lines  chan map[string]any // decoded stdout records
 	done   chan int            // exit code
+	seen   []map[string]any    // records consumed by waitFor, in order
 }
 
 func startProc(t *testing.T) *proc {
@@ -125,6 +126,7 @@ func (p *proc) waitFor(t *testing.T, msg string) map[string]any {
 			if !ok {
 				t.Fatalf("stdout closed before %q; stderr: %s", msg, p.stderr.String())
 			}
+			p.seen = append(p.seen, rec)
 			if rec["msg"] == msg {
 				return rec
 			}
@@ -132,6 +134,19 @@ func (p *proc) waitFor(t *testing.T, msg string) map[string]any {
 			t.Fatalf("no %q record within 10s; stderr: %s", msg, p.stderr.String())
 		}
 	}
+}
+
+// seenRecord returns the first record with msg among those waitFor consumed,
+// such as the recovery line logged before listening.
+func (p *proc) seenRecord(t *testing.T, msg string) map[string]any {
+	t.Helper()
+	for _, rec := range p.seen {
+		if rec["msg"] == msg {
+			return rec
+		}
+	}
+	t.Fatalf("no %q record before %v", msg, p.seen)
+	return nil
 }
 
 func (p *proc) signal(t *testing.T, sig os.Signal) {

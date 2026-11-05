@@ -104,17 +104,25 @@ type Store struct {
 	locks keyLocks
 	index *objectIndex
 
+	recovery RecoveryReport
+
 	// bmu guards buckets. CreateBucket holds it exclusively for its whole
 	// write path, so concurrent creates of one name have one winner.
 	bmu     sync.RWMutex
 	buckets map[string]Bucket
 }
 
-// Open creates tmp/, data/, meta/ and buckets/ under root if needed, removes
-// every leftover in tmp/ from writes interrupted by a crash, loads every
-// bucket record and rebuilds the object index from the metadata records. A
-// bucket record that cannot be read or is invalid fails Open; an object
-// record that cannot be decoded is left out of the index.
+// Open brings the store under root to a consistent state and opens it. In
+// order, it creates tmp/, data/, meta/ and buckets/ if needed; removes every
+// leftover of an interrupted write from tmp/; loads every bucket record;
+// rebuilds the object index from the metadata records whose body exists; and
+// removes every body in data/ that no indexed record names. Recovery reports
+// the counts. A bucket record that cannot be read or is invalid, and any I/O
+// error (including a failed removal), fail Open; an object record that
+// cannot be used is left out of the index and counted.
+//
+// The removals need no directory sync: if a crash undoes one, the next Open
+// repeats it.
 func Open(fsys fsx.FS, root string) (*Store, error) {
 	for _, dir := range []string{tmpDir, dataDir, metaDir, bucketsDir} {
 		if err := fsys.MkdirAll(filepath.Join(root, dir), dirPerm); err != nil {
@@ -127,17 +135,28 @@ func Open(fsys fsx.FS, root string) (*Store, error) {
 		return nil, fmt.Errorf("storage: list %s: %w", tmp, err)
 	}
 	for _, de := range leftovers {
-		if err := fsys.Remove(filepath.Join(tmp, de.Name())); err != nil {
-			return nil, fmt.Errorf("storage: remove leftover: %w", err)
+		path := filepath.Join(tmp, de.Name())
+		if err := fsys.Remove(path); err != nil {
+			return nil, fmt.Errorf("storage: remove leftover %s: %w", path, err)
 		}
 	}
 	s := &Store{fsys: fsys, root: root, now: time.Now, index: newObjectIndex()}
+	s.recovery.TmpRemoved = len(leftovers)
 	buckets, err := s.loadBuckets()
 	if err != nil {
 		return nil, err
 	}
 	s.buckets = buckets
-	if err := s.loadIndex(); err != nil {
+	s.recovery.Buckets = len(buckets)
+	bodies, err := s.listBodies()
+	if err != nil {
+		return nil, err
+	}
+	referenced, err := s.loadIndex(bodies)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.removeOrphans(bodies, referenced); err != nil {
 		return nil, err
 	}
 	return s, nil

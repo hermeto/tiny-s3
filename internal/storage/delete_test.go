@@ -93,12 +93,17 @@ func TestDeleteFailures(t *testing.T) {
 			if tt.wantErr != errors.Is(err, errInjected) {
 				t.Fatalf("Delete = %v, want error %v", err, tt.wantErr)
 			}
+			if tt.keepsData != (len(entries(t, root, "data")) == 1) {
+				t.Fatalf("data = %v, want kept %v", entries(t, root, "data"), tt.keepsData)
+			}
 			_, err = reopen(t, root).Head("b", "k")
 			if tt.keepsObject != (err == nil) {
 				t.Fatalf("Head after Delete = %v, want object kept %v", err, tt.keepsObject)
 			}
-			if tt.keepsData != (len(entries(t, root, "data")) == 1) {
-				t.Fatalf("data = %v, want kept %v", entries(t, root, "data"), tt.keepsData)
+			// Startup recovery (013) then keeps the body only if a record
+			// still names it.
+			if tt.keepsObject != (len(entries(t, root, "data")) == 1) {
+				t.Fatalf("data after reopen = %v, want kept %v", entries(t, root, "data"), tt.keepsObject)
 			}
 		})
 	}
