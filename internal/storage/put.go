@@ -130,12 +130,19 @@ func (r *ctxReader) Read(p []byte) (int, error) {
 
 // writeRecord writes rec to a synced temp file and returns its path. On any
 // error the temp file is removed.
-func (s *Store) writeRecord(rec record) (path string, err error) {
+func (s *Store) writeRecord(rec record) (string, error) {
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return "", fmt.Errorf("storage: encode record: %w", err)
 	}
-	f, err := s.fsys.CreateTemp(filepath.Join(s.root, tmpDir), "meta-*")
+	return s.writeTemp("meta-*", b)
+}
+
+// writeTemp writes b to a new synced and closed file in tmp/, named after
+// pattern as in CreateTemp, and returns its path. On any error the file is
+// removed.
+func (s *Store) writeTemp(pattern string, b []byte) (path string, err error) {
+	f, err := s.fsys.CreateTemp(filepath.Join(s.root, tmpDir), pattern)
 	if err != nil {
 		return "", fmt.Errorf("storage: create temp record: %w", err)
 	}

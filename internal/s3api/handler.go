@@ -17,6 +17,11 @@ type Op func(w http.ResponseWriter, r *http.Request, t Target)
 
 // Ops holds one handler per in-scope S3 operation. A nil field answers
 // ErrNotImplemented; each operation feature sets its own field.
+//
+// CheckBucket, when set, gates every routed operation on a bucket except
+// CreateBucket: it runs before the Op (and before a nil Op's
+// NotImplemented) and returns the error to answer with and false when the
+// bucket cannot be used.
 type Ops struct {
 	ListBuckets   Op
 	CreateBucket  Op
@@ -26,6 +31,7 @@ type Ops struct {
 	GetObject     Op
 	HeadObject    Op
 	DeleteObject  Op
+	CheckBucket   func(r *http.Request, bucket string) (APIError, bool)
 }
 
 // NewHandler returns the S3 request handler. It assigns every request an ID
@@ -41,6 +47,9 @@ func NewHandler(ops Ops, log *slog.Logger) http.Handler {
 		defer recoverPanic(rw, r, log)
 
 		op, t, e, ok := route(&ops, r)
+		if ok && needsBucket(r, t) && ops.CheckBucket != nil {
+			e, ok = ops.CheckBucket(r, t.Bucket)
+		}
 		switch {
 		case !ok:
 			WriteError(rw, r, e)
@@ -50,6 +59,12 @@ func NewHandler(ops Ops, log *slog.Logger) http.Handler {
 			op(rw, r, t)
 		}
 	})
+}
+
+// needsBucket reports whether a routed request must find its bucket: every
+// request on a bucket except CreateBucket (PUT on the bucket itself).
+func needsBucket(r *http.Request, t Target) bool {
+	return t.Bucket != "" && (t.Key != "" || r.Method != http.MethodPut)
 }
 
 func recoverPanic(rw *responseWriter, r *http.Request, log *slog.Logger) {

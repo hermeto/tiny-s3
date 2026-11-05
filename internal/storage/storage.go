@@ -7,6 +7,8 @@
 //	data/<version>    one immutable body per committed Put
 //	meta/<hash>.json  the metadata record of a key; its presence is the
 //	                  commit point, so a key without it does not exist
+//	buckets/<name>.json  the record of a bucket; its presence is the commit
+//	                  point, and every record is loaded into memory by Open
 //
 // <hash> is the hex SHA-256 of len(bucket) ":" bucket key. The length prefix
 // makes the mapping unambiguous whatever the bucket contains, and the fixed
@@ -21,6 +23,7 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -28,10 +31,11 @@ import (
 )
 
 const (
-	tmpDir  = "tmp"
-	dataDir = "data"
-	metaDir = "meta"
-	dirPerm = 0o750
+	tmpDir     = "tmp"
+	dataDir    = "data"
+	metaDir    = "meta"
+	bucketsDir = "buckets"
+	dirPerm    = 0o750
 )
 
 // Errors returned by the engine. The S3 layer maps them to S3 error codes.
@@ -78,12 +82,18 @@ type Store struct {
 	root  string
 	now   func() time.Time
 	locks keyLocks
+
+	// bmu guards buckets. CreateBucket holds it exclusively for its whole
+	// write path, so concurrent creates of one name have one winner.
+	bmu     sync.RWMutex
+	buckets map[string]Bucket
 }
 
-// Open creates tmp/, data/ and meta/ under root if needed and removes every
-// leftover in tmp/ from writes interrupted by a crash.
+// Open creates tmp/, data/, meta/ and buckets/ under root if needed, removes
+// every leftover in tmp/ from writes interrupted by a crash, and loads every
+// bucket record. A bucket record that cannot be read or is invalid fails Open.
 func Open(fsys fsx.FS, root string) (*Store, error) {
-	for _, dir := range []string{tmpDir, dataDir, metaDir} {
+	for _, dir := range []string{tmpDir, dataDir, metaDir, bucketsDir} {
 		if err := fsys.MkdirAll(filepath.Join(root, dir), dirPerm); err != nil {
 			return nil, fmt.Errorf("storage: create %s: %w", dir, err)
 		}
@@ -98,7 +108,13 @@ func Open(fsys fsx.FS, root string) (*Store, error) {
 			return nil, fmt.Errorf("storage: remove leftover: %w", err)
 		}
 	}
-	return &Store{fsys: fsys, root: root, now: time.Now}, nil
+	s := &Store{fsys: fsys, root: root, now: time.Now}
+	buckets, err := s.loadBuckets()
+	if err != nil {
+		return nil, err
+	}
+	s.buckets = buckets
+	return s, nil
 }
 
 func validateKey(key string) error {

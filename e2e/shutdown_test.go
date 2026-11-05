@@ -71,7 +71,13 @@ type proc struct {
 
 func startProc(t *testing.T) *proc {
 	t.Helper()
-	cmd := exec.Command(binary, "-listen=127.0.0.1:0", "-data-dir="+t.TempDir())
+	return startProcIn(t, t.TempDir())
+}
+
+// startProcIn starts s3d on dataDir, so a test can restart it on the same data.
+func startProcIn(t *testing.T, dataDir string) *proc {
+	t.Helper()
+	cmd := exec.Command(binary, "-listen=127.0.0.1:0", "-data-dir="+dataDir)
 	p := &proc{cmd: cmd, stderr: &syncBuffer{}, lines: make(chan map[string]any, 64), done: make(chan int, 1)}
 	cmd.Stderr = p.stderr
 	stdout, err := cmd.StdoutPipe()
@@ -165,13 +171,13 @@ func sendAndSettle(t *testing.T, addr, raw string) net.Conn {
 }
 
 // holdInFlightRequest sends a complete header and half of a small declared
-// body. The placeholder handler answers at once, but before flushing the
+// body. The bucket gate answers NoSuchBucket at once, but before flushing the
 // response net/http drains the unread body (it is under 256 KiB), which
 // blocks on this client while the connection is StateActive. Shutdown waits
 // for it until the rest of the body arrives or the deadline passes.
 func holdInFlightRequest(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	return sendAndSettle(t, addr, "PUT /b/k HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234")
+	return sendAndSettle(t, addr, "PUT /missing/k HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n01234")
 }
 
 // holdPartialHeader sends a request header without its final blank line.
@@ -225,8 +231,8 @@ func TestDrainWithSecondSignal(t *testing.T) {
 	}
 	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusNotImplemented || !strings.Contains(string(body), "NotImplemented") {
-		t.Fatalf("response = %d %q (%v), want a complete 501", resp.StatusCode, body, err)
+	if err != nil || resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "NoSuchBucket") {
+		t.Fatalf("response = %d %q (%v), want a complete 404 NoSuchBucket", resp.StatusCode, body, err)
 	}
 
 	code, elapsed := p.exit(t, began)

@@ -28,6 +28,20 @@ var (
 		"We encountered an internal error. Please try again."}
 )
 
+// Errors produced by the bucket operations and the bucket gate.
+var (
+	ErrInvalidBucketName = APIError{http.StatusBadRequest, "InvalidBucketName",
+		"The specified bucket is not valid."}
+	ErrNoSuchBucket = APIError{http.StatusNotFound, "NoSuchBucket",
+		"The specified bucket does not exist."}
+	ErrBucketAlreadyOwnedByYou = APIError{http.StatusConflict, "BucketAlreadyOwnedByYou",
+		"Your previous request to create the named bucket succeeded and you already own it."}
+	ErrMalformedXML = APIError{http.StatusBadRequest, "MalformedXML",
+		"The XML you provided was not well-formed or did not validate against our published schema."}
+	ErrInvalidLocationConstraint = APIError{http.StatusBadRequest, "InvalidLocationConstraint",
+		"The specified location constraint is not valid."}
+)
+
 // errorBody is the S3 XML error document. Field order is element order.
 type errorBody struct {
 	XMLName   xml.Name `xml:"Error"`

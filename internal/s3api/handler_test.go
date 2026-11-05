@@ -444,3 +444,106 @@ func TestRequestIDUnique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// gatedOps returns recordingOps whose CheckBucket lets only bucket "b"
+// through and answers NoSuchBucket otherwise.
+func gatedOps() (Ops, *recorder, *[]string) {
+	ops, rec := recordingOps()
+	var checked []string
+	var mu sync.Mutex
+	ops.CheckBucket = func(_ *http.Request, bucket string) (APIError, bool) {
+		mu.Lock()
+		checked = append(checked, bucket)
+		mu.Unlock()
+		if bucket == "b" {
+			return APIError{}, true
+		}
+		return ErrNoSuchBucket, false
+	}
+	return ops, rec, &checked
+}
+
+func TestBucketGate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		method, target string
+		op             string // "" when the gate answers
+		checked        bool
+	}{
+		{"HEAD", "/b", "HeadBucket", true},
+		{"GET", "/b?list-type=2", "ListObjectsV2", true},
+		{"PUT", "/b/k", "PutObject", true},
+		{"GET", "/b/k", "GetObject", true},
+		{"HEAD", "/b/k", "HeadObject", true},
+		{"DELETE", "/b/k", "DeleteObject", true},
+		{"HEAD", "/missing", "", true},
+		{"GET", "/missing?list-type=2", "", true},
+		{"PUT", "/missing/k", "", true},
+		{"GET", "/missing/k", "", true},
+		{"HEAD", "/missing/k", "", true},
+		{"DELETE", "/missing/k", "", true},
+		{"PUT", "/missing", "CreateBucket", false},
+		{"GET", "/", "ListBuckets", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.target, func(t *testing.T) {
+			t.Parallel()
+			ops, rec, checked := gatedOps()
+			w := serve(NewHandler(ops, discardLogger()), tt.method, tt.target, nil)
+			if got := len(*checked) > 0; got != tt.checked {
+				t.Fatalf("checked = %v, want %v", *checked, tt.checked)
+			}
+			calls := rec.taken()
+			if tt.op == "" {
+				if len(calls) != 0 {
+					t.Fatalf("ops called %v, want none", calls)
+				}
+				if w.Code != http.StatusNotFound {
+					t.Fatalf("status = %d, want 404", w.Code)
+				}
+				if tt.method == "HEAD" && w.Body.Len() != 0 {
+					t.Fatalf("HEAD body = %q, want empty", w.Body.String())
+				}
+				if tt.method != "HEAD" && parseError(t, w.Body.Bytes()).Code != "NoSuchBucket" {
+					t.Fatalf("body = %q, want NoSuchBucket", w.Body.String())
+				}
+				return
+			}
+			if len(calls) != 1 || calls[0].op != tt.op {
+				t.Fatalf("ops called %v, want %s", calls, tt.op)
+			}
+		})
+	}
+}
+
+func TestBucketGateSkipsRoutingErrors(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		method, target string
+		status         int
+	}{
+		{"GET", "/missing?acl", http.StatusNotImplemented},
+		{"PATCH", "/missing/k", http.StatusMethodNotAllowed},
+		{"POST", "/missing/k", http.StatusNotImplemented},
+	} {
+		ops, _, checked := gatedOps()
+		w := serve(NewHandler(ops, discardLogger()), tt.method, tt.target, nil)
+		if w.Code != tt.status || len(*checked) != 0 {
+			t.Fatalf("%s %s: status %d, checked %v; want %d unchecked", tt.method, tt.target, w.Code, *checked, tt.status)
+		}
+	}
+}
+
+func TestBucketGateThenNotImplemented(t *testing.T) {
+	t.Parallel()
+	ops, _, checked := gatedOps()
+	ops.GetObject = nil
+	w := serve(NewHandler(ops, discardLogger()), "GET", "/b/k", nil)
+	if w.Code != http.StatusNotImplemented || len(*checked) != 1 {
+		t.Fatalf("status %d, checked %v; want 501 after one check", w.Code, *checked)
+	}
+	w = serve(NewHandler(ops, discardLogger()), "GET", "/missing/k", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing bucket: status %d, want 404", w.Code)
+	}
+}
