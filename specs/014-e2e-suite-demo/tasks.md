@@ -8,8 +8,8 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `diffutils-3.8-1.amzn2023.0.2` to `e2e/Dockerfile` (dnf, no weak deps, cache cleaned) and check `cmp --version` runs in the built image
-- [ ] T002 [P] Add a `shellcheck` target to `Makefile` running `koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb` over `scripts/`
+- [X] T001 Add `diffutils-3.8-1.amzn2023.0.2` to `e2e/Dockerfile` (dnf, no weak deps, cache cleaned) and check `cmp --version` runs in the built image
+- [X] T002 [P] Add a `shellcheck` target to `Makefile` running `koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb` over `scripts/`
 
 ---
 
@@ -52,7 +52,7 @@
 - [X] T012 Update `README.md`: Development table (`make e2e`, `make shellcheck`), CI table and ruleset JSON with `make e2e`, the demo, and a `### 014 end-to-end suite and demo` design section
 - [X] T013 Run `make vet test race cover e2e` and `make shellcheck`; 100% for every `internal/` package
 - [X] T014 Run `quickstart.md`, including the Compose check, then `docker compose down -v`; record the demo's duration without pauses (SC-004: under 3 minutes)
-- [ ] T015 After pushing, confirm the `make e2e` check runs and passes in CI on the pull request's branch, and record its duration (SC-001: under 15 minutes)
+- [X] T015 After pushing, confirm the `make e2e` check runs and passes in CI on the pull request's branch, and record its duration (SC-001: under 15 minutes)
 
 ## Dependencies & Execution Order
 
@@ -85,3 +85,4 @@ No constitution conflicts: the new CI check is named after its command and runs 
 - T007: after a passing and a failing run nothing named `tiny-s3-e2e-` remained; SIGINT and SIGTERM mid-run exited 130 and 143 (TERM changed from 130 during the task) and removed everything; a Compose stack answered 200 on port 9000 during and after a run. A first SIGINT attempt was invalid (a background job in a non-interactive shell ignores SIGINT), so the signals were sent from a Python parent.
 - T008: the first crash design killed the server with nothing acknowledged or nothing in flight, depending on timing. The final design throttles ten `aws s3 cp` uploads to 4 MB/s (no retries) and kills only after the ten `put-object` uploads are acknowledged and five throttled ones hold temp files; the restart must report removed temp files. Two consecutive runs: 10 acknowledged, 10 in flight, `tmp_removed` 10, 2,517 objects and bodies.
 - Measured: `make e2e` 245 s locally; the demo without pauses 7 s (SC-004: under 3 minutes).
+- T015: the first CI run of the branch passed every check; `make e2e` took 5 min 41 s on ubuntu-24.04 (SC-001: under 15 minutes).
