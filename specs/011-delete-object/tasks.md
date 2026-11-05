@@ -55,3 +55,14 @@ T002 and T005 are in one new file; T004/T007 and T008 are different e2e files.
 ## Implementation Strategy
 
 Wire the operation, then prove durability and read consistency.
+
+## Analysis Remediation (2026-11-05)
+
+`/speckit-analyze` findings, handled with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| C1 | MEDIUM | The input says a deleted object is gone from LIST, but ListObjectsV2 is feature 012, so no task here can test it. | Deferred explicitly: feature 012 must test that a deleted key is not listed (also stated in the spec's edge cases). |
+| U1 | LOW | T005/T006 and T008 are likely to pass on their first run, since the 005 engine already provides the behavior. | Accepted; they are regression tests at the HTTP and e2e layers and are labeled as such in their tasks. |
+
+No constitution conflicts. Coverage: FR-001–FR-008 and SC-001–SC-003 each map to at least one task (100%).
