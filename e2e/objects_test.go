@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -162,7 +163,47 @@ func TestPutObjectLargeFlatMemory(t *testing.T) {
 		t.Fatalf("got %d, ETag %q, want 200 %s", resp.StatusCode, resp.Header.Get("ETag"), want)
 	}
 	if rss := peakRSS(t, p.cmd.Process.Pid); rss >= 64<<20 {
-		t.Fatalf("peak RSS %d MiB, want below 64 MiB", rss>>20)
+		t.Fatalf("peak RSS after upload %d MiB, want below 64 MiB", rss>>20)
+	}
+
+	// Download it back (feature 009) and check the bytes and the memory.
+	get, err := http.Get("http://" + p.addr + "/demo/big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2 := md5.New()
+	n, err := io.Copy(h2, get.Body)
+	_ = get.Body.Close()
+	if err != nil || n != size || !bytes.Equal(h2.Sum(nil), h.Sum(nil)) {
+		t.Fatalf("download: %d bytes, %v; MD5 match %v", n, err, bytes.Equal(h2.Sum(nil), h.Sum(nil)))
+	}
+	if rss := peakRSS(t, p.cmd.Process.Pid); rss >= 64<<20 {
+		t.Fatalf("peak RSS after download %d MiB, want below 64 MiB", rss>>20)
+	}
+	p.stop(t)
+}
+
+// TestGetSurvivesOverwrite overwrites a key over HTTP while a download of it
+// is half read; the download still returns the original bytes.
+func TestGetSurvivesOverwrite(t *testing.T) {
+	p := startProc(t)
+	mustSucceed(t, p.addr, "create-bucket", "--bucket", "demo")
+	original := randomBytes(t, 8<<20)
+	putETag(t, p.addr, "--bucket", "demo", "--key", "k", "--body", writeFile(t, original))
+
+	resp, err := http.Get("http://" + p.addr + "/demo/k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	first := make([]byte, 1<<20)
+	if _, err := io.ReadFull(resp.Body, first); err != nil {
+		t.Fatal(err)
+	}
+	putETag(t, p.addr, "--bucket", "demo", "--key", "k", "--body", writeFile(t, []byte("new content")))
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil || !bytes.Equal(append(first, rest...), original) {
+		t.Fatalf("download during overwrite: %d bytes, %v; want the original", len(first)+len(rest), err)
 	}
 	p.stop(t)
 }
