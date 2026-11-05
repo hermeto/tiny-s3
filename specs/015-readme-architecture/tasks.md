@@ -27,7 +27,7 @@
 
 ## Phase 4: User Story 2 - From clone to a working demo (Priority: P1)
 
-- [ ] T005 [US2] Write section 3 (use it with the aws CLI): one copy-paste walkthrough from `docker compose up` to `docker compose down -v`, working in a temporary directory it creates, covering buckets, put with metadata, head, get with `cmp`, a range, listing with prefix and delimiter, `aws s3 ls`, delete, and pointing to `make e2e` and `scripts/demo.sh`
+- [ ] T005 [US2] Write section 3 (use it with the aws CLI): one copy-paste walkthrough from `docker compose up` to `docker compose down -v` and the removal of the temporary directory it creates and works in, covering buckets, put with metadata, head, get with `cmp`, a range, listing with prefix and delimiter, `aws s3 ls`, delete, and pointing to `make e2e` and `scripts/demo.sh`
 - [ ] T006 [US2] Run the walkthrough exactly as written from a fresh clone of the branch and fix anything that differs (R4)
 
 ---
@@ -51,7 +51,7 @@
 
 - [ ] T012 Run the structure checks of `quickstart.md`; all pass
 - [ ] T013 Run `make vet test race cover e2e`; all pass
-- [ ] T014 Check the README renders on GitHub after the push (badge, both Mermaid diagrams, `<details>` blocks)
+- [ ] T014 Render the README with GitHub's Markdown API (`gh api -X POST /markdown`, mode `gfm`) and check the badge image, two `mermaid` blocks and 15 `<details>` blocks in the HTML
 
 ## Dependencies & Execution Order
 
@@ -64,3 +64,15 @@ None worth it: one file, written top to bottom.
 ## Implementation Strategy
 
 Capture the failing checks, preserve the records, write the sections in order, validate the walkthrough from a clean clone.
+
+## Analysis Remediation (2026-11-05)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| C1 | MEDIUM | The contract requires every failure row to cite a test, a container-suite check or a note, but the quickstart only checked `Test…` names. | Quickstart check 6 flags any row with none of the three. |
+| U1 | MEDIUM | FR-003 ends on a clean machine, but T005 did not remove the walkthrough's temporary directory. | T005 removes it. |
+| U2 | LOW | T014 ("renders on GitHub") had no way to be checked from the terminal. | T014 renders through GitHub's Markdown API and inspects the HTML. |
+
+No constitution conflicts: the trade-off records stay in the README's design section. Coverage: FR-001–FR-011 and SC-001–SC-004 each map to at least one task (100%).
