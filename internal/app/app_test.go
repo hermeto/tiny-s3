@@ -216,7 +216,7 @@ func TestMainObjectOpsNeedBucket(t *testing.T) {
 	}
 	for _, op := range objectOps {
 		want, ok := implemented[op.method]
-		if !ok || op.path == "/demo?list-type=2" {
+		if !ok {
 			want = http.StatusNotImplemented
 		}
 		if status, _ := send(op.method, op.path); status != want {
