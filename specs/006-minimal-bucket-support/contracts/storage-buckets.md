@@ -23,7 +23,7 @@ func (s *Store) ListBuckets() []Bucket
 
 | Call | Result |
 |------|--------|
-| `Open` | Also creates `buckets/` and loads every record; a bad record fails with `ErrCorruptRecord` wrapping the path. |
+| `Open` | Also creates `buckets/` and loads every record; a bad record fails with `ErrCorruptRecord`, an I/O error with that error, both naming the path. |
 | `CreateBucket(invalid)` | `ErrInvalidBucketName`, no disk access |
 | `CreateBucket(existing)` | `ErrBucketExists`, nothing written |
 | `CreateBucket(new)` | The new `Bucket`, returned only after the record is renamed into `buckets/` and `buckets/` is synced |

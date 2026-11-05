@@ -28,7 +28,7 @@ Path: `<root>/buckets/<name>.json`. Written through `<root>/tmp/bucket-*` and re
 | `name` | Bucket name | Must equal the file name without `.json`, and be valid |
 | `created` | Creation date, RFC 3339 with nanoseconds, UTC | Must be non-zero |
 
-A record over 64 KiB, unreadable, or failing a check makes `Open` fail with `ErrCorruptRecord`.
+A record over 64 KiB or failing a check makes `Open` fail with `ErrCorruptRecord`; an I/O error reading it makes `Open` fail with that error. Both name the path.
 
 ## Store layout after this feature
 

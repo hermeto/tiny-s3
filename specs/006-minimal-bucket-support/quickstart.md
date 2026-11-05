@@ -22,21 +22,21 @@ Expected: every target exits 0; `make cover` lists every `internal/` package at 
 
 ```sh
 docker compose up -d --build
-export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_PAGER=""
-s3="aws --endpoint-url http://localhost:9000 s3api"
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_DEFAULT_OUTPUT=json AWS_PAGER=""
+s3() { aws --endpoint-url http://localhost:9000 s3api "$@"; }   # a function works in bash and zsh
 
-$s3 create-bucket --bucket demo                       # 1
-$s3 create-bucket --bucket demo                       # 2
-$s3 head-bucket --bucket demo                         # 3
-$s3 head-bucket --bucket missing                      # 4
-$s3 list-buckets                                      # 5
+s3 create-bucket --bucket demo                       # 1
+s3 create-bucket --bucket demo                       # 2
+s3 head-bucket --bucket demo                         # 3
+s3 head-bucket --bucket missing                      # 4
+s3 list-buckets                                      # 5
 docker compose restart s3d
-$s3 list-buckets                                      # 6
-$s3 get-object --bucket missing --key k /dev/null     # 7
-$s3 create-bucket --bucket Bad_Name                   # 8
-$s3 create-bucket --bucket eu \
+s3 list-buckets                                      # 6
+s3 get-object --bucket missing --key k /dev/null     # 7
+s3 create-bucket --bucket Bad_Name                   # 8
+s3 create-bucket --bucket eu-bucket \
   --create-bucket-configuration LocationConstraint=eu-west-1   # 9
-$s3 get-object --bucket demo --key k /dev/null        # 10
+s3 get-object --bucket demo --key k /dev/null        # 10
 docker compose down -v
 ```
 

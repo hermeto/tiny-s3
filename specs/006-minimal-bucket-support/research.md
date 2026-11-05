@@ -22,7 +22,7 @@ Every decision below took the recommended option, as authorized by the feature o
 
 ## R4 Startup load
 
-- **Decision**: `Open` lists `buckets/` and decodes every entry. An entry whose name is not `<valid bucket name>.json`, that cannot be read, is over 64 KiB, does not decode, has an unknown version, a name different from its file name, or a zero creation date fails `Open` with `ErrCorruptRecord` naming the path. `s3d` then exits 1 with `s3d: <error>`.
+- **Decision**: `Open` lists `buckets/` and decodes every entry. An entry whose name is not `<valid bucket name>.json`, that is over 64 KiB, does not decode, has an unknown version, a name different from its file name, or a zero creation date fails `Open` with `ErrCorruptRecord` naming the path. An I/O error listing `buckets/` or opening or reading an entry fails `Open` with that error, also naming the path. `s3d` then exits 1 with `s3d: <error>`.
 - **Rationale**: Clarification 5 (refuse to start). The write path never leaves a partial record in `buckets/` (temp + rename), so a bad entry means outside interference, which the operator must see.
 - **Alternatives considered**: Skip and log (a bucket silently disappears; its objects become unreachable).
 
@@ -34,7 +34,7 @@ Every decision below took the recommended option, as authorized by the feature o
 
 ## R6 The NoSuchBucket gate
 
-- **Decision**: `s3api.Ops` gains `CheckBucket func(bucket string) (APIError, bool)`. After routing succeeds for a request with a bucket, and unless it is a bucket-level `PUT` (CreateBucket), the handler calls `CheckBucket`; when it returns false, the handler answers that error and no Op runs. The check runs before the "nil Op is NotImplemented" fallback, so object operations that are not implemented yet still answer `NoSuchBucket` on a missing bucket and `NotImplemented` on an existing one. `HeadBucket`'s Op then only answers 200. Requests stopped by routing (subresources, unsupported methods, `InvalidURI`) are unchanged.
+- **Decision**: `s3api.Ops` gains `CheckBucket func(r *http.Request, bucket string) (APIError, bool)`; the request lets an internal error be logged with its request ID. After routing succeeds for a request with a bucket, and unless it is a bucket-level `PUT` (CreateBucket), the handler calls `CheckBucket`; when it returns false, the handler answers that error and no Op runs. The check runs before the "nil Op is NotImplemented" fallback, so object operations that are not implemented yet still answer `NoSuchBucket` on a missing bucket and `NotImplemented` on an existing one. `HeadBucket`'s Op then only answers 200. Requests stopped by routing (subresources, unsupported methods, `InvalidURI`) are unchanged.
 - **Rationale**: One gate covers HeadBucket and all five object operations, today and when the object features land. The router (003) is unchanged; the gate is skipped when `CheckBucket` is nil, so existing router tests stand.
 - **Alternatives considered**: A check inside every Op (each future Op must remember it, and nil Ops could not answer `NoSuchBucket`). A bucket check in `storage.Put/Get/Head/Delete` (the 005 engine and its tests treat the bucket as a namespace; the HTTP gate is enough while one process owns the store and DeleteBucket does not exist).
 
