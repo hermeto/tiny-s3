@@ -24,12 +24,19 @@ type cliResult struct {
 // image provides aws (make e2e); its absence fails the test, never skips it.
 func awsCLI(t *testing.T, addr string, args ...string) cliResult {
 	t.Helper()
+	return awsCLIAt(t, "http://"+addr, nil, args...)
+}
+
+// awsCLIAt is awsCLI against any endpoint URL, with extra environment
+// variables (such as AWS_CA_BUNDLE for an HTTPS endpoint).
+func awsCLIAt(t *testing.T, endpoint string, env []string, args ...string) cliResult {
+	t.Helper()
 	path, err := exec.LookPath("aws")
 	if err != nil {
 		t.Fatalf("aws CLI not found (run the e2e tests with make e2e): %v", err)
 	}
 	home := t.TempDir()
-	cmd := exec.Command(path, append([]string{"--endpoint-url", "http://" + addr, "--output", "json", "s3api"}, args...)...)
+	cmd := exec.Command(path, append([]string{"--endpoint-url", endpoint, "--output", "json", "s3api"}, args...)...)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + home,
@@ -42,6 +49,7 @@ func awsCLI(t *testing.T, addr string, args ...string) cliResult {
 		"AWS_MAX_ATTEMPTS=1",
 		"AWS_PAGER=",
 	}
+	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
