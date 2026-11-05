@@ -60,6 +60,12 @@ var (
 		"The Content-MD5 you specified did not match what we received."}
 	ErrInvalidArgument = APIError{http.StatusBadRequest, "InvalidArgument",
 		"Invalid Argument"}
+	ErrInvalidRequest = APIError{http.StatusBadRequest, "InvalidRequest",
+		"Invalid Request"}
+	// ErrBadChecksum is BadDigest for an x-amz-checksum-* value, with a
+	// message that does not blame Content-MD5.
+	ErrBadChecksum = APIError{http.StatusBadRequest, "BadDigest",
+		"The checksum you specified did not match the calculated checksum."}
 )
 
 // errorBody is the S3 XML error document. Field order is element order.

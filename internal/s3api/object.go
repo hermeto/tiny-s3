@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/hermeto/tiny-s3/internal/awschunked"
 	"github.com/hermeto/tiny-s3/internal/storage"
 )
 
@@ -22,12 +24,12 @@ type ObjectStore interface {
 // an Expect: 100-continue client send its body.
 func PutObjectOp(store ObjectStore, log *slog.Logger) Op {
 	return func(w http.ResponseWriter, r *http.Request, t Target) {
-		opts, e, ok := putOptions(r)
+		req, e, ok := parsePut(r)
 		if !ok {
 			WriteError(w, r, e)
 			return
 		}
-		info, err := store.Put(r.Context(), t.Bucket, t.Key, r.Body, r.ContentLength, opts)
+		info, err := store.Put(r.Context(), t.Bucket, t.Key, req.body, req.size, req.opts)
 		if err != nil {
 			WriteError(w, r, storageError(log, r, "PutObject", t, err))
 			return
@@ -37,31 +39,58 @@ func PutObjectOp(store ObjectStore, log *slog.Logger) Op {
 	}
 }
 
-// putOptions checks the PutObject headers, in the order of research R4, and
-// returns the storage options or the error to answer with. It never reads
-// the body.
-func putOptions(r *http.Request) (storage.PutOptions, APIError, bool) {
+// putRequest is a checked PutObject request: the payload reader, its size
+// and the storage options.
+type putRequest struct {
+	body io.Reader
+	size int64
+	opts storage.PutOptions
+}
+
+// noTrailers is the trailer lookup of a plain (unframed) body.
+func noTrailers(string) (string, bool) { return "", false }
+
+// parsePut checks the PutObject headers, in the order of research R5 (008),
+// and returns the request to store or the error to answer with. It never
+// reads the body: an aws-chunked body is decoded as Store.Put reads it, and
+// a client checksum is verified by the Verify callback before the commit.
+func parsePut(r *http.Request) (putRequest, APIError, bool) {
+	req := putRequest{body: r.Body, size: r.ContentLength}
+	trailer := noTrailers
 	if isAWSChunked(r.Header) {
-		// Decoding comes with feature 008; storing the framing would
-		// corrupt the object.
-		return storage.PutOptions{}, ErrNotImplemented, false
+		v := r.Header.Get("X-Amz-Decoded-Content-Length")
+		if v == "" {
+			return putRequest{}, ErrMissingContentLength, false
+		}
+		size, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || size < 0 {
+			return putRequest{}, ErrInvalidArgument, false
+		}
+		dec := awschunked.NewReader(r.Body)
+		req.body, req.size, trailer = dec, size, dec.Trailer
+	} else if r.ContentLength < 0 {
+		return putRequest{}, ErrMissingContentLength, false
 	}
-	if r.ContentLength < 0 {
-		return storage.PutOptions{}, ErrMissingContentLength, false
-	}
-	var digest []byte
 	if v := r.Header.Get("Content-MD5"); v != "" {
 		b, err := base64.StdEncoding.DecodeString(v)
 		if err != nil || len(b) != md5.Size {
-			return storage.PutOptions{}, ErrInvalidDigest, false
+			return putRequest{}, ErrInvalidDigest, false
 		}
-		digest = b
+		req.opts.ContentMD5 = b
+	}
+	c, e, ok := requestChecksum(r.Header)
+	if !ok {
+		return putRequest{}, e, false
+	}
+	if c != nil {
+		req.body, req.opts.Verify = c.wrap(req.body, trailer)
 	}
 	meta, ok := userMetadata(r.Header)
 	if !ok {
-		return storage.PutOptions{}, ErrMetadataTooLarge, false
+		return putRequest{}, ErrMetadataTooLarge, false
 	}
-	return storage.PutOptions{ContentMD5: digest, ContentType: r.Header.Get("Content-Type"), Metadata: meta}, APIError{}, true
+	req.opts.ContentType, req.opts.Metadata = r.Header.Get("Content-Type"), meta
+	return req, APIError{}, true
 }
 
 // isAWSChunked reports whether the body uses the aws-chunked framing: the

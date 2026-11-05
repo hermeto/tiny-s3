@@ -359,13 +359,36 @@ Trade-offs made so far, newest feature last.
   `io.ErrUnexpectedEOF`; the engine maps it to `IncompleteBody`, and the S3 layer maps a cancelled request context
   the same way. Both fail before the commit, so nothing is stored and the temp file is removed. The client is
   usually gone and never sees the 400; the status matters for logs and half-closed connections.
-- **aws-chunked is refused, not stored.** Until feature 008 decodes it, a `Content-Encoding: aws-chunked` or
+- **aws-chunked was refused, not stored** (replaced by decoding in 008). Until feature 008, a `Content-Encoding: aws-chunked` or
   `STREAMING-*` upload answers `501 NotImplemented`, because storing the chunk framing would corrupt the object.
   Over plain HTTP the aws CLI 2.31 sends ordinary bodies (checked with a capture), so the default CLI works.
-- **Checksum and signature headers are ignored for now.** The CLI sends `x-amz-checksum-crc64nvme` and a hex
-  `X-Amz-Content-SHA256`; feature 008 owns checksums. SigV4 is out of scope.
+- **Checksum and signature headers were ignored here.** The CLI sends `x-amz-checksum-crc64nvme` and a hex
+  `X-Amz-Content-SHA256`; feature 008 verifies the checksums. SigV4 is out of scope.
 - **One mapping from engine errors to S3 errors.** Bucket and object operations share it; errors with no S3
   meaning answer `500 InternalError` and are logged as `storage_error` with the request ID, bucket and key (006's
   `bucket_error` log was renamed).
 - **Flat memory proven at 2 GiB on the real binary.** An e2e test streams a generated 2 GiB body and checks the
   server's peak RSS (`VmHWM`) stays below 64 MiB, on top of the engine's 64 MiB allocation test.
+
+### 008 aws-chunked decoding
+
+- **The CLI frames uploads only over HTTPS.** Captures of aws CLI 2.31.11 show plain bodies with an
+  `x-amz-checksum-crc64nvme` header over HTTP, and `Transfer-Encoding: chunked` plus `Content-Encoding:
+  aws-chunked` with a CRC64NVME trailer over HTTPS. tiny-s3 serves plain HTTP, so the e2e tests put a TLS reverse
+  proxy in front of s3d, run the real CLI against it with its default settings, and assert that the proxy saw
+  aws-chunked bodies; otherwise a passing test would prove nothing about the decoder.
+- **A small decoder package.** `internal/awschunked` reads through one 4 KiB `bufio.Reader`: chunk data passes
+  straight through, and chunk-header and trailer lines longer than 4 KiB are rejected, so memory does not depend on
+  chunk or object size (a 64 MiB single-chunk test allocates under 4 MiB). It accepts signed and unsigned framing
+  and ignores chunk and trailer signatures (SigV4 is out of scope). A stream cut short is `IncompleteBody`; one that
+  breaks the framing, or has bytes after its end, is `InvalidRequest`.
+- **The declared decoded length is the object size.** `X-Amz-Decoded-Content-Length` replaces `Content-Length` for
+  framed uploads (411 when absent); the engine's exact-length copy turns any disagreement into `IncompleteBody`.
+- **Checksums are verified before the commit, then dropped.** CRC32, CRC32C, CRC64NVME (`hash/crc64` with the NVMe
+  polynomial), SHA1 and SHA256, from one header or from the trailer named in `x-amz-trailer`. The body is teed into
+  the hash, and a `Verify` callback in `storage.PutOptions` runs after the last byte and before the sync, so a
+  mismatch (`BadDigest`) never reaches the commit point. Two checksums or an invalid value are `InvalidRequest`.
+  Checksums are not stored or echoed, so GetObject cannot return them.
+- **Content-Encoding is not stored.** An `aws-chunked,gzip` upload stores the gzip payload, and reading it back will
+  not say it is gzip. Storing Content-Encoding would come with the other standard headers.
+- **Unsigned hex `X-Amz-Content-SHA256` is not checked.** It is part of SigV4, which stays out of scope.
