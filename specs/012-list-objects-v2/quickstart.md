@@ -22,10 +22,10 @@ for k in top dir/f1 dir/sub/f2 dir/sub/f3 'dir/a b+c.txt'; do
   s3 put-object --bucket demo --key "$k" --body /tmp/tiny-s3-hello.txt >/dev/null
 done
 s3 list-objects-v2 --bucket demo --query 'Contents[].[Key,Size,StorageClass]' --output text   # 1
-s3 list-objects-v2 --bucket demo --prefix dir/ --delimiter / \
+s3 list-objects-v2 --bucket demo --prefix dir/ --delimiter / --no-paginate \
   --query '{k:Contents[].Key,p:CommonPrefixes[].Prefix,n:KeyCount}'                           # 2
 aws --endpoint-url http://localhost:9000 s3 ls s3://demo/dir/                                # 3
-s3 list-objects-v2 --bucket demo --max-keys 2 --query '[KeyCount,IsTruncated,NextContinuationToken!=null]'   # 4
+s3 list-objects-v2 --bucket demo --max-keys 2 --no-paginate --query '[KeyCount,IsTruncated,NextContinuationToken!=null]'   # 4
 s3 list-objects-v2 --bucket demo --start-after dir/sub/f2 --query 'Contents[].Key'           # 5
 s3 delete-object --bucket demo --key top
 s3 list-objects-v2 --bucket demo --query 'Contents[].Key'                                    # 6
@@ -33,6 +33,8 @@ s3 list-objects-v2 --bucket missing                                             
 rm /tmp/tiny-s3-hello.txt
 docker compose down -v
 ```
+
+`--no-paginate` shows one server response; without it the CLI follows the tokens itself and drops per-page fields such as `KeyCount`.
 
 Expected:
 
