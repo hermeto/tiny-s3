@@ -35,7 +35,7 @@ As an S3 client user, I download only a byte range of an object, to resume an in
 1. **Given** an object of size N ≥ 100, **When** the client requests `bytes=0-99`, **Then** the response is 206 with exactly the first 100 bytes and `Content-Range: bytes 0-99/N`.
 2. **Given** an object of size N > 100, **When** the client requests `bytes=100-`, **Then** the response is 206 with bytes 100 to N−1 and `Content-Range: bytes 100-(N−1)/N`.
 3. **Given** an object of size N ≥ 50, **When** the client requests `bytes=-50`, **Then** the response is 206 with the last 50 bytes.
-4. **Given** an object of size N, **When** the client requests `bytes=10-` followed by an end beyond N, **Then** the end is clamped to N−1.
+4. **Given** an object of size N > 10, **When** the client requests `bytes=10-M` with M ≥ N, **Then** the end is clamped to N−1 (`Content-Range: bytes 10-(N−1)/N`).
 5. **Given** an object of size N, **When** the client requests `bytes=-M` with M > N, **Then** the response is 206 with the whole object (`bytes 0-(N−1)/N`).
 
 ---

@@ -23,7 +23,7 @@ No setup needed.
 
 ## Phase 3: User Story 1 - Read part of an object (Priority: P1) 🎯 MVP
 
-- [ ] T005 [P] [US1] Write failing handler tests in `internal/s3api/get_test.go` (real store): GET with `bytes=0-99`, `bytes=100-`, `bytes=-50`, clamped end, long suffix → 206, exact bytes, `Content-Range`, `Content-Length` = range length and the 009 headers; HEAD with the same ranges → same status and headers, no body; a read fault inside the range aborts the connection
+- [ ] T005 [P] [US1] Write failing handler tests in `internal/s3api/get_test.go` (real store): GET with `bytes=0-99`, `bytes=100-`, `bytes=-50`, clamped end, long suffix and `bytes=0-` (206, not 200) → 206, exact bytes, `Content-Range`, `Content-Length` = range length and the 009 headers; HEAD with the same ranges → same status and headers, no body; a read fault inside the range aborts the connection
 - [ ] T006 [US1] Apply `parseRange` in GET (section reader) and HEAD in `internal/s3api/object.go` (research R3)
 - [ ] T007 [US1] Write `e2e/range_test.go`: `aws s3api get-object --range` with the three forms and a clamped end, outputs equal to the source slices, `ContentRange` as expected
 
@@ -62,3 +62,14 @@ No setup needed.
 ## Implementation Strategy
 
 Parser first, then serve ranges (MVP), then 416, then the cases S3 ignores.
+
+## Analysis Remediation (2026-11-04)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| I1 | MEDIUM | US1 scenario 4 ("`bytes=10-` followed by an end beyond N") was ambiguous and untestable as written. | Rewritten as `bytes=10-M` with M ≥ N and the expected `Content-Range`. |
+| C1 | LOW | The edge case "`bytes=0-` answers 206, not 200" had no task. | Added to T005. |
+
+No constitution conflicts. Coverage: FR-001–FR-009 and SC-001–SC-003 each map to at least one task (100%).
