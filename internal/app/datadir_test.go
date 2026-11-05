@@ -28,8 +28,14 @@ func TestMainCreatesMissingDataDir(t *testing.T) {
 	if !info.IsDir() || info.Mode().Perm() != 0o750 {
 		t.Errorf("data dir mode = %v, want directory with 0750", info.Mode())
 	}
-	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
-		t.Errorf("data dir entries = %v (%v), want none", entries, err)
+	// The writability probe is gone; only the store layout remains.
+	entries, err := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if err != nil || strings.Join(names, " ") != "buckets data meta tmp" {
+		t.Errorf("data dir entries = %v (%v), want the store layout only", names, err)
 	}
 
 	r.cancel()

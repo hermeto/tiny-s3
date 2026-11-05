@@ -25,10 +25,11 @@ func TestRouting(t *testing.T) {
 		status       int
 		code         string // "" for HEAD
 	}{
-		{http.MethodGet, "/", http.StatusNotImplemented, "NotImplemented"},
+		{http.MethodGet, "/b?acl", http.StatusNotImplemented, "NotImplemented"},
 		{http.MethodPatch, "/b/k", http.StatusMethodNotAllowed, "MethodNotAllowed"},
 		{http.MethodGet, "//k", http.StatusBadRequest, "InvalidURI"},
-		{http.MethodHead, "/b/k", http.StatusNotImplemented, ""},
+		{http.MethodHead, "/missing/k", http.StatusNotFound, ""}, // NoSuchBucket
+		{http.MethodGet, "/b/k", http.StatusBadRequest, "InvalidBucketName"},
 	}
 	for _, tt := range tests {
 		req, err := http.NewRequest(tt.method, base+tt.path, nil)

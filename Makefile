@@ -17,13 +17,19 @@ TTY := $(shell test -t 0 && echo -t)
 GOMOD_CACHE ?= tiny-s3-gomod
 GOBUILD_CACHE ?= tiny-s3-gobuild
 
-DOCKER_RUN := docker run --rm $(TTY) \
+# DOCKER_RUN_IN is the docker run prefix without the image, shared by the Go
+# image and the e2e image.
+DOCKER_RUN_IN := docker run --rm $(TTY) \
 	-v "$(CURDIR)":/src -w /src \
 	-v "$(GOMOD_CACHE)":/go/pkg/mod \
 	-v "$(GOBUILD_CACHE)":/root/.cache/go-build \
 	-e GOTOOLCHAIN=local \
-	-e GOFLAGS=-mod=readonly \
-	$(GO_IMAGE)
+	-e GOFLAGS=-mod=readonly
+
+DOCKER_RUN := $(DOCKER_RUN_IN) $(GO_IMAGE)
+
+# The e2e image adds the AWS CLI v2 to the same Go toolchain (e2e/Dockerfile).
+E2E_IMAGE := tiny-s3-e2e
 
 .PHONY: test race vet cover e2e clean-cache
 
@@ -42,9 +48,11 @@ vet:
 cover:
 	$(DOCKER_RUN) bash scripts/cover-gate.sh
 
-# Builds the real s3d binary and drives it with real signals (e2e/).
+# Builds the real s3d binary and drives it with real signals and the real
+# `aws s3api` CLI (e2e/).
 e2e:
-	$(DOCKER_RUN) go test -tags e2e -count=1 ./e2e/...
+	docker build -q --build-arg GO_IMAGE=$(GO_IMAGE) -t $(E2E_IMAGE) -f e2e/Dockerfile e2e
+	$(DOCKER_RUN_IN) $(E2E_IMAGE) go test -tags e2e -count=1 ./e2e/...
 
 clean-cache:
 	docker volume rm -f tiny-s3-gomod tiny-s3-gobuild

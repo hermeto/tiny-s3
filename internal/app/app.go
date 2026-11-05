@@ -17,6 +17,7 @@ import (
 	"github.com/hermeto/tiny-s3/internal/fsx"
 	"github.com/hermeto/tiny-s3/internal/s3api"
 	"github.com/hermeto/tiny-s3/internal/server"
+	"github.com/hermeto/tiny-s3/internal/storage"
 )
 
 // Main runs s3d with args (without the program name) until ctx is cancelled
@@ -30,17 +31,24 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, fsys fsx
 	case err != nil:
 		return 2
 	}
-	return run(ctx, cfg, stdout, stderr, fsys, func(log *slog.Logger) http.Handler {
-		return s3api.NewHandler(s3api.Ops{}, log)
+	return run(ctx, cfg, stdout, stderr, fsys, func(log *slog.Logger, store *storage.Store) http.Handler {
+		return s3api.NewHandler(s3api.BucketOps(store, log), log)
 	})
 }
 
-// run builds the logger, then the handler from newHandler, so the handler can
-// log as JSON on the same stream.
-func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys fsx.FS, newHandler func(*slog.Logger) http.Handler) int {
+// run builds the logger, opens the store, then builds the handler from
+// newHandler, so the handler can log as JSON on the same stream. The store is
+// open, with every bucket loaded, before the port is.
+func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys fsx.FS, newHandler func(*slog.Logger, *storage.Store) http.Handler) int {
 	log := slog.New(slog.NewJSONHandler(stdout, nil))
 
 	if err := checkDataDir(fsys, cfg.DataDir); err != nil {
+		fmt.Fprintf(stderr, "s3d: %v\n", err)
+		return 1
+	}
+
+	store, err := storage.Open(fsys, cfg.DataDir)
+	if err != nil {
 		fmt.Fprintf(stderr, "s3d: %v\n", err)
 		return 1
 	}
@@ -52,7 +60,7 @@ func run(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, fsys 
 	}
 	log.Info("listening", "listen", ln.Addr().String(), "data_dir", cfg.DataDir)
 
-	if err := server.Run(ctx, ln, newHandler(log), cfg.ShutdownTimeout, log); err != nil {
+	if err := server.Run(ctx, ln, newHandler(log, store), cfg.ShutdownTimeout, log); err != nil {
 		fmt.Fprintf(stderr, "s3d: %v\n", err)
 		return 1
 	}

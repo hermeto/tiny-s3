@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/hermeto/tiny-s3/internal/config"
 	"github.com/hermeto/tiny-s3/internal/fsx"
+	"github.com/hermeto/tiny-s3/internal/storage"
 )
 
 type syncBuffer struct {
@@ -116,14 +120,118 @@ func TestMainServesAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	raw, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("status = %d, want 501", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(raw), "<Code>NoSuchBucket</Code>") {
+		t.Errorf("GET /bucket/key = %d %q, want 404 NoSuchBucket", resp.StatusCode, raw)
 	}
 
 	r.cancel()
 	if c := r.code(t); c != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+}
+
+func TestMainCreatesBucket(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
+		return Main(ctx, []string{"-listen=127.0.0.1:0", "-data-dir=" + dir}, stdout, stderr, fsx.OS{})
+	})
+	addr, _ := r.waitFor(t, "listening")["listen"].(string)
+
+	for _, want := range []int{http.StatusOK, http.StatusConflict} {
+		req, err := http.NewRequest(http.MethodPut, "http://"+addr+"/demo", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("PUT /demo = %d, want %d", resp.StatusCode, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "buckets", "demo.json")); err != nil {
+		t.Fatalf("bucket record: %v", err)
+	}
+
+	r.cancel()
+	if c := r.code(t); c != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+}
+
+// TestMainObjectOpsNeedBucket drives every object operation through Main with
+// a real store: NoSuchBucket on a missing bucket, NotImplemented (the object
+// features come later) once the bucket exists.
+func TestMainObjectOpsNeedBucket(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
+		return Main(ctx, []string{"-listen=127.0.0.1:0", "-data-dir=" + dir}, stdout, stderr, fsx.OS{})
+	})
+	base := "http://" + r.waitFor(t, "listening")["listen"].(string)
+
+	send := func(method, path string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(method, base+path, strings.NewReader(""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode, string(raw)
+	}
+	objectOps := []struct{ method, path string }{
+		{http.MethodPut, "/demo/k"},
+		{http.MethodGet, "/demo/k"},
+		{http.MethodHead, "/demo/k"},
+		{http.MethodDelete, "/demo/k"},
+		{http.MethodGet, "/demo?list-type=2"},
+	}
+	for _, op := range objectOps {
+		status, body := send(op.method, op.path)
+		want := op.method == http.MethodHead || strings.Contains(body, "<Code>NoSuchBucket</Code>")
+		if status != http.StatusNotFound || !want {
+			t.Fatalf("%s %s on a missing bucket = %d %q, want 404 NoSuchBucket", op.method, op.path, status, body)
+		}
+	}
+	if status, _ := send(http.MethodPut, "/demo"); status != http.StatusOK {
+		t.Fatalf("create = %d", status)
+	}
+	for _, op := range objectOps {
+		if status, _ := send(op.method, op.path); status != http.StatusNotImplemented {
+			t.Fatalf("%s %s on an existing bucket = %d, want 501", op.method, op.path, status)
+		}
+	}
+
+	r.cancel()
+	if c := r.code(t); c != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", c, r.stderr.String())
+	}
+}
+
+func TestMainStorageOpenFailure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fsys := fsx.NewFaulty(fsx.OS{}, fsx.Fault{Op: fsx.OpMkdirAll, PathPattern: filepath.Join(dir, "buckets"), Err: errors.New("injected")})
+	var stdout, stderr bytes.Buffer
+	c := Main(context.Background(), []string{"-listen=127.0.0.1:0", "-data-dir=" + dir}, &stdout, &stderr, fsys)
+	if c != 1 {
+		t.Fatalf("exit = %d, want 1", c)
+	}
+	if want := "s3d: storage: "; !strings.HasPrefix(stderr.String(), want) || !strings.Contains(stderr.String(), "injected") {
+		t.Fatalf("stderr = %q, want prefix %q and the injected error", stderr.String(), want)
+	}
+	if strings.Contains(stdout.String(), "listening") {
+		t.Fatalf("stdout reports listening: %q", stdout.String())
 	}
 }
 
@@ -178,7 +286,7 @@ func TestRunForcedShutdown(t *testing.T) {
 	})
 	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: t.TempDir(), ShutdownTimeout: 50 * time.Millisecond}
 	r := launch(t, func(ctx context.Context, stdout, stderr io.Writer) int {
-		return run(ctx, cfg, stdout, stderr, fsx.OS{}, func(*slog.Logger) http.Handler { return h })
+		return run(ctx, cfg, stdout, stderr, fsx.OS{}, func(*slog.Logger, *storage.Store) http.Handler { return h })
 	})
 	addr, _ := r.waitFor(t, "listening")["listen"].(string)
 

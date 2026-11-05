@@ -1,9 +1,10 @@
 # tiny-s3
 
 tiny-s3 is a minimal S3-compatible object store written in Go, with its own storage engine and only the
-standard library in production code. So far it is the server and the S3 protocol layer: it starts, checks its
-data directory, routes path-style S3 requests to their operation, answers in the S3 XML error format, and shuts
-down cleanly. The operations themselves come in later features; until then they answer `501 NotImplemented`.
+standard library in production code. So far it is the server, the S3 protocol layer, the storage engine and
+bucket support: it starts, checks its data directory, routes path-style S3 requests to their operation, creates,
+checks and lists buckets durably, answers in the S3 XML error format, and shuts down cleanly. Object operations
+answer `404 NoSuchBucket` on a missing bucket and `501 NotImplemented` otherwise, until their features land.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
 
@@ -11,11 +12,18 @@ Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is n
 
 ```sh
 docker compose up -d --build              # server on localhost:9000, data in the tiny-s3_data volume
-curl -si http://localhost:9000/any/path   # 501 NotImplemented with an S3 XML error body
-curl -si -X PATCH http://localhost:9000/b # 405 MethodNotAllowed
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_DEFAULT_OUTPUT=json
+aws --endpoint-url http://localhost:9000 s3api create-bucket --bucket demo   # {"Location": "/demo"}
+aws --endpoint-url http://localhost:9000 s3api head-bucket --bucket demo     # 200, BucketRegion us-east-1
+aws --endpoint-url http://localhost:9000 s3api list-buckets                  # demo with its CreationDate
+curl -si http://localhost:9000/missing/key # 404 NoSuchBucket with an S3 XML error body
+curl -si -X PATCH http://localhost:9000/b  # 405 MethodNotAllowed
 docker compose stop                       # graceful stop, exit code 0
 docker compose down -v                    # remove the container and the data volume
 ```
+
+Any credentials work: requests are not authenticated. Use path-style addressing (the aws CLI does for
+`localhost`) and region `us-east-1`.
 
 ## Running s3d
 
@@ -51,7 +59,7 @@ Every target runs in a digest-pinned `golang:1.27.3` container. Module and build
 | `make race` | `go test -race ./...` |
 | `make vet` | `go vet -tags e2e ./...` |
 | `make cover` | `scripts/cover-gate.sh`: fails unless every package under `internal/` has tests and 100% statement coverage |
-| `make e2e` | Builds the real `s3d` binary and drives it with real signals (`e2e/`, build tag `e2e`, about 10 s) |
+| `make e2e` | Builds the `tiny-s3-e2e` image (`e2e/Dockerfile`: AWS CLI v2 plus the pinned Go toolchain), then builds the real `s3d` binary and drives it with real signals and the real `aws s3api` CLI (`e2e/`, build tag `e2e`, about 15 s) |
 | `make clean-cache` | Removes the cache volumes |
 
 A pull request is mergeable when the CI checks below pass (see `.specify/memory/constitution.md`). Run the
@@ -63,7 +71,9 @@ runs.
 
 Layout: `cmd/s3d` only handles signals and the exit code; `internal/app` wires everything; `internal/config`
 parses flags; `internal/fsx` is the filesystem layer with fault injection; `internal/s3api` routes S3
-requests, assigns request IDs and renders S3 errors; `internal/server` runs the HTTP server and its shutdown.
+requests, assigns request IDs, renders S3 errors and serves the bucket operations; `internal/server` runs the
+HTTP server and its shutdown; `internal/storage` is the storage engine (objects and buckets), opened by
+`internal/app` before the port.
 
 ## CI
 
@@ -286,6 +296,48 @@ Trade-offs made so far, newest feature last.
   the index-rebuild feature, which has to read every record anyway.
 - **Flat directories.** `data/` and `meta/` have no hash fan-out. ext4 and XFS index large directories, and
   the record format names its data file, so fan-out can come later without a migration.
-- **Not wired to HTTP yet.** The engine has no S3 endpoint in this feature; the PutObject feature maps its
+- **Not wired to HTTP yet.** The engine has no S3 object endpoint in this feature; the PutObject feature maps its
   errors (IncompleteBody, BadDigest, EntityTooLarge, KeyTooLongError, NoSuchKey) to S3 responses and adds the
   `aws s3api` e2e tests.
+
+### 006 minimal bucket support
+
+- **Buckets are durable records plus an in-memory map.** Each bucket is `buckets/<name>.json` (`v`, `name`,
+  `created`) in the store root, written like an object record: temp file in `tmp/`, sync, rename, sync
+  `buckets/`. The rename plus sync is the commit point, and a sync failure after the rename removes the record
+  again (if that also fails, the complete record is kept and the bucket exists). `storage.Open` loads every
+  record into a map, so the bucket check on every request is a map lookup, and the store is opened before the
+  port: a listening server has every bucket loaded.
+- **Readable file names, not hashes.** Bucket names are validated before they become file names, and a valid name
+  is `[a-z0-9.-]` without `..`, so it cannot leave `buckets/`. Operators can see the buckets with `ls`.
+- **Fail to start on a bad bucket record.** A record that does not decode, has an unknown version, a name that
+  differs from its file name, or no creation date stops `s3d` with the path in the error. The write path never
+  leaves a partial record, so a bad one means outside interference; hiding the bucket would make its objects
+  unreachable without a trace.
+- **One lock for all creates.** CreateBucket holds one write lock across its whole write path, so concurrent
+  creates of a name have exactly one winner; checks and lists share a read lock. Creates are rare, so
+  serializing them costs nothing.
+- **One gate for every bucket and object operation.** `Ops.CheckBucket` runs after routing and before the
+  operation (and before the NotImplemented fallback), for every request on a bucket except CreateBucket. So
+  object operations already answer `NoSuchBucket` on a missing bucket, and the object features inherit the check.
+  Requests rejected by routing (subresource, method, invalid URI) keep their errors. The storage engine's object
+  calls do not check the bucket themselves: one process owns the store and buckets cannot be deleted yet, so
+  the HTTP gate is enough. DeleteBucket will have to revisit this.
+- **Name validation on every bucket request.** The current S3 rules for general purpose buckets, including the
+  IPv4 form and the reserved prefixes and suffixes, apply to create, check and the object operations, so an
+  invalid name answers `400 InvalidBucketName`, never `404`. Legacy us-east-1 names (uppercase, underscores) are
+  rejected.
+- **409 on re-create, unlike real us-east-1.** S3 in us-east-1 answers `200` when you re-create a bucket you own;
+  every other region answers `409 BucketAlreadyOwnedByYou`. tiny-s3 answers 409, which is what clients handle
+  everywhere and what tells a script it did not create the bucket.
+- **us-east-1 only, checked on create.** A create body naming another region answers `400
+  InvalidLocationConstraint` instead of silently creating the bucket here; no body, no location, an empty location
+  or `us-east-1` are accepted (S3 itself rejects an explicit `us-east-1`; accepting it is harmless). A body over
+  64 KiB or that is not a `CreateBucketConfiguration` answers `400 MalformedXML`. Object Lock and ACL headers on
+  create are ignored.
+- **ListBuckets in one page.** All buckets, sorted by name, with a fixed owner (`tiny-s3`); `prefix`,
+  `max-buckets` and `continuation-token` are ignored. Fine at S3's default quota of 10,000 buckets; paging can be
+  added without changing the store.
+- **Real aws CLI in `make e2e`.** The e2e image is the official `amazon/aws-cli` image pinned by digest, with the
+  Go tree copied from the same pinned golang image as every other target, so there is still one toolchain
+  definition. CI does not run `make e2e` yet: adding it is a new required check and a ruleset change.

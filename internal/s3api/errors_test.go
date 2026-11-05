@@ -34,6 +34,11 @@ func TestAPIErrorValues(t *testing.T) {
 		{ErrMethodNotAllowed, 405, "MethodNotAllowed", "The specified method is not allowed against this resource."},
 		{ErrInvalidURI, 400, "InvalidURI", "Couldn't parse the specified URI."},
 		{ErrInternalError, 500, "InternalError", "We encountered an internal error. Please try again."},
+		{ErrInvalidBucketName, 400, "InvalidBucketName", "The specified bucket is not valid."},
+		{ErrNoSuchBucket, 404, "NoSuchBucket", "The specified bucket does not exist."},
+		{ErrBucketAlreadyOwnedByYou, 409, "BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded and you already own it."},
+		{ErrMalformedXML, 400, "MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema."},
+		{ErrInvalidLocationConstraint, 400, "InvalidLocationConstraint", "The specified location constraint is not valid."},
 	}
 	for _, tt := range tests {
 		if tt.got.Status != tt.status || tt.got.Code != tt.code || tt.got.Message != tt.message {
