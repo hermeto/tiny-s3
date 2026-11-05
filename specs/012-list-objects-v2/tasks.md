@@ -18,7 +18,7 @@ No setup needed.
 - [ ] T002 Implement `objectIndex` in `internal/storage/index.go` (research R1)
 - [ ] T003 [P] Write failing tests in `internal/storage/index_test.go` for keeping the index equal to the records: after Put, overwrite, Delete and Delete of a missing key the index matches `Head`; with `fsx.Faulty`, a failed record rename leaves the index unchanged, a `meta/` sync failure rolled back restores the previous entry (or removes the new one), a rollback that fails keeps the new entry, a failed record removal keeps the entry, and a failed `meta/` sync after a removal drops it (research R2)
 - [ ] T004 Update the index in `commit`/`rollback` (`internal/storage/put.go`) and `Delete` (`internal/storage/delete.go`) under the key lock
-- [ ] T005 [P] Write failing tests in `internal/storage/index_test.go` for the rebuild: reopening a store lists every object with its size, MD5 and last-modified; an undecodable record is skipped and `Open` succeeds; a `ReadDir` or `Open` failure on `meta/` fails `Open` (`fsx.Faulty`)
+- [ ] T005 [P] Write failing tests in `internal/storage/index_test.go` for the rebuild: reopening a store lists every object with its size, MD5 and last-modified; an undecodable record, a record whose bucket and key do not hash to its file name, and a non-`.json` entry are skipped and `Open` succeeds; a `ReadDir`, `Open` or read failure on `meta/` fails `Open` (`fsx.Faulty`)
 - [ ] T006 Rebuild the index in `Open` in `internal/storage/storage.go` (research R3)
 
 **Checkpoint**: the index matches the records in every unit test.
@@ -27,11 +27,11 @@ No setup needed.
 
 ## Phase 3: User Story 1 - List a bucket (Priority: P1) 🎯 MVP
 
-- [ ] T007 [P] [US1] Write failing tests for `Store.List` in `internal/storage/list_test.go`: all keys in order with size, MD5 and last-modified; empty and unknown buckets return nothing; `MaxKeys` 0 returns an empty, non-truncated result
+- [ ] T007 [P] [US1] Write failing tests for `Store.List` in `internal/storage/list_test.go`: all keys in order with size, MD5 and last-modified; empty and unknown buckets return nothing; `MaxKeys` 0 returns an empty, non-truncated result; a listing makes no filesystem call (`fsx.Faulty` history stays empty, FR-007)
 - [ ] T008 [US1] Implement `Store.List` (without prefix and delimiter yet) in `internal/storage/list.go`
 - [ ] T009 [P] [US1] Write failing handler tests in `internal/s3api/list_test.go`: XML per `contracts/http-list-objects-v2.md` (namespace, Name, MaxKeys, KeyCount, IsTruncated false, Contents with `LastModified` in milliseconds UTC, quoted ETag, Size, `STANDARD`), `Content-Type: application/xml`; `max-keys` invalid (`-1`, `abc`) and `encoding-type=xml` → 400 `InvalidArgument`
 - [ ] T010 [US1] Implement `ListObjectsV2Op` in `internal/s3api/list.go` and wire it in `internal/app/app.go`; update `TestMainObjectOpsNeedBucket` in `internal/app/app_test.go`
-- [ ] T011 [US1] Write `e2e/list_test.go`: keys uploaded in random order list in byte order with every field through `aws s3api list-objects-v2`; an empty bucket; `(NoSuchBucket)`; a listing right after a put and after a delete reflects them; the listing survives a restart; update the 006 e2e test that expected `NotImplemented` for `list-objects-v2` on an existing bucket
+- [ ] T011 [US1] Write `e2e/list_test.go`: keys uploaded in random order list in byte order with every field through `aws s3api list-objects-v2`; an empty bucket; `(NoSuchBucket)`; a listing right after a put and after a delete reflects them (the check 011 deferred here); the listing survives a restart
 
 ---
 
@@ -51,13 +51,13 @@ No setup needed.
 - [ ] T018 [US3] Add `After`, `AfterGroup`, `Truncated` and `Next` to `Store.List` in `internal/storage/list.go`
 - [ ] T019 [P] [US3] Write failing tests in `internal/s3api/list_test.go`: default and capped `max-keys` (1000), `NextContinuationToken` and `ContinuationToken` echo, token precedence over `start-after` (which is still echoed), `start-after` alone, undecodable tokens → `InvalidArgument`, and a concurrent test under `-race` that pages through 2,500 keys while goroutines add, overwrite and delete other keys, expecting every original key exactly once
 - [ ] T020 [US3] Implement tokens and `start-after` in `internal/s3api/list.go` (research R4)
-- [ ] T021 [US3] Add to `e2e/list_test.go`: 2,500 keys paged with `--max-keys 100` and `--starting-token` style calls (raw `continuation-token`) while another client uploads and overwrites; every key exactly once; `--start-after` through the CLI; the CLI's own pagination (`list-objects-v2` without `--max-keys` limit, `--page-size 100`) returns 2,500 keys
+- [ ] T021 [US3] Add to `e2e/list_test.go`: 2,500 keys paged by hand with `aws s3api list-objects-v2 --no-paginate --max-keys 100 [--continuation-token T]` while a concurrent HTTP client uploads new keys spread across the key space and overwrites original keys; every original key exactly once and no key twice; `--start-after` through the CLI; the CLI's own paginator (`--page-size 100`, no `--max-keys`) returns all 2,500 keys
 
 ---
 
 ## Phase 6: Polish
 
-- [ ] T022 Write a benchmark-style test in `internal/storage/list_test.go` that lists 1,000 keys from 10,000 and fails above 100 ms (SC-004)
+- [ ] T022 Write a timing test in `internal/storage/list_timing_test.go` (build tag `!race`, so it runs in `make test` and `make cover` but not under the race detector's 5–10× slowdown) that lists 1,000 keys from 10,000 and fails above 100 ms (SC-004)
 - [ ] T023 Add the `### 012 ordered index and ListObjectsV2` design section to `README.md` and update the intro and quick start
 - [ ] T024 Run `make vet test race cover e2e`; 100% for every `internal/` package
 - [ ] T025 Run `quickstart.md` against `docker compose up -d --build`, then `docker compose down -v`
@@ -73,3 +73,18 @@ No setup needed.
 ## Implementation Strategy
 
 Index first, kept equal to the records; then plain listing (MVP), prefixes and folders, and paging.
+
+## Analysis Remediation (2026-11-05)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| C1 | MEDIUM | FR-007 (no disk reads per listing) had no assertion. | T007 asserts that `List` makes no filesystem call. |
+| C2 | MEDIUM | The rebuild had no rule for a record that decodes but sits under the wrong file name, or for non-`.json` entries; indexing them could list a key twice or under the wrong bucket. | T005 skips both, as corrupt; research R3 updated. |
+| I1 | MEDIUM | T021 mixed the CLI's own paginator (`--starting-token`, `--page-size`) with manual paging; the CLI turns auto-pagination off when a manual token or page limit is given, so the test would not have controlled the pages. | T021 pages by hand with `--no-paginate --max-keys 100 --continuation-token`, and checks the CLI's paginator separately with `--page-size 100`. |
+| U1 | MEDIUM | "Every key exactly once under concurrent writes" did not say which writes, nor which keys the assertion covers. | T021 and T019 name them: new keys spread across the key space and overwrites of original keys; every original key exactly once, no key twice. |
+| C3 | MEDIUM | SC-004's 100 ms bound would be measured under `-race` in `make race`, where it is meaningless and flaky. | T022 uses the `!race` build tag: the bound is checked by `make test` and `make cover`, not under instrumentation. |
+| I2 | LOW | T011 asked to update a 006 e2e test that only checks `list-objects-v2` on a missing bucket (still `NoSuchBucket`). | Clause removed; the 011 deferral (deleted keys are not listed) is named in T011 instead. |
+
+No constitution conflicts. Coverage: FR-001–FR-010 and SC-001–SC-004 each map to at least one task (100%).

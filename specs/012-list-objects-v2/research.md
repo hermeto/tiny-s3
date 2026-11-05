@@ -15,7 +15,7 @@ Every decision took the recommended option, as authorized by the feature owner.
 
 ## R3 Rebuild at startup
 
-- **Decision**: `Open` reads every `meta/*.json` record and indexes it. An undecodable record (`ErrCorruptRecord`) is skipped; an I/O error fails `Open`. Orphan cleanup, counts and logging are feature 013.
+- **Decision**: `Open` reads every `meta/*.json` record and indexes it. An undecodable record (`ErrCorruptRecord`), a record whose bucket and key do not hash to its file name, and a non-`.json` entry are skipped; an I/O error fails `Open`. Orphan cleanup, counts and logging are feature 013.
 
 ## R4 Listing algorithm
 
