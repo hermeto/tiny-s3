@@ -9,7 +9,7 @@ Every decision took the recommended option, as authorized by the feature owner.
 
 ## R2 Proving durability after a crash
 
-- **Decision**: An e2e test uploads, deletes with the aws CLI, sends SIGKILL to s3d right after the CLI returns, restarts it on the same data directory and expects `head-object` 404 and `get-object` `NoSuchKey`. A handler test with `fsx.Faulty` failing the `meta/` sync after the record removal expects 500 and checks that the object stays readable from a reopened store.
+- **Decision**: An e2e test uploads, deletes with the aws CLI, sends SIGKILL to s3d right after the CLI returns, restarts it on the same data directory and expects `head-object` 404 and `get-object` `NoSuchKey`. Handler tests with `fsx.Faulty`: a failing record removal expects 500 and a readable object; a failing `meta/` sync after the removal expects 500 and the data file kept (found during implementation: the first draft of the spec said the object stays readable in both cases, which the engine does not and cannot do once the record is removed).
 - **Note**: SIGKILL does not drop the OS page cache, so it proves the acknowledged state is on the filesystem, not that it survived power loss; the engine's sync-order tests (005) cover the fsync calls.
 
 ## R3 Delete during a download

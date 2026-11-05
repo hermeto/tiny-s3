@@ -48,7 +48,8 @@ As an operator, once a delete is acknowledged the object never comes back, even 
 **Acceptance Scenarios**:
 
 1. **Given** an acknowledged delete, **When** the server is killed abruptly and restarted, **Then** the key answers 404 `NoSuchKey`.
-2. **Given** a storage failure while making the delete durable, **When** the client deletes, **Then** the request fails with 500 `InternalError` and the object stays fully readable.
+2. **Given** a storage failure while removing the object's record, **When** the client deletes, **Then** the request fails with 500 `InternalError` and the object stays fully readable.
+3. **Given** a storage failure while making an already-removed record durable, **When** the client deletes, **Then** the request fails with 500 `InternalError`; the object may be gone, or come back after a crash, but whenever it is visible it is complete.
 
 ---
 
@@ -76,7 +77,7 @@ As an S3 client user, a download that started before someone deleted the object 
 
 - **FR-001**: Users MUST be able to delete an object; success answers 204 with no body, whether or not the key existed.
 - **FR-002**: After an acknowledged delete, downloads and metadata requests for the key MUST answer 404 `NoSuchKey`, including after a restart or crash.
-- **FR-003**: The server MUST answer the delete only after the removal is durable; a failure to make it durable MUST answer 500 `InternalError` and leave the object readable.
+- **FR-003**: The server MUST answer the delete only after the removal is durable. A failure to remove the record MUST answer 500 `InternalError` and leave the object readable; a failure to make the removal durable MUST answer 500 `InternalError` and keep the object's body, so an object that reappears after a crash is complete.
 - **FR-004**: A delete MUST NOT interrupt downloads already in progress.
 - **FR-005**: A missing bucket MUST answer 404 `NoSuchBucket`; a key over 1024 bytes 400 `KeyTooLongError`.
 - **FR-006**: The operation MUST be exercised end to end by the real S3 command-line client, including a crash right after an acknowledged delete (constitution Principle V).
