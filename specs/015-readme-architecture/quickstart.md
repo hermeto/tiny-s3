@@ -9,7 +9,7 @@ grep '^## ' README.md                                   # 1
 sed -n 3p README.md                                     # 2
 grep -c '^```mermaid' README.md                         # 3
 grep -c '^<details>' README.md                          # 4
-for t in $(sed -n '/^## Failure modes/,/^## Testing/p' README.md | grep -oE 'Test[A-Za-z0-9_]+' | sort -u); do
+for t in $(sed -n '/^## Failure modes/,/^## Testing/{/^## Testing/!p;}' README.md | grep -oE 'Test[A-Za-z0-9_]+' | sort -u); do
   grep -rqE "^func $t\(" internal e2e || echo "missing $t"
 done                                                    # 5
 sed -n '/^## Failure modes/,/^## Testing/p' README.md | grep '^| ' | tail -n +3 |
