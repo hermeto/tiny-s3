@@ -211,8 +211,9 @@ func TestPutObjectLargeFlatMemory(t *testing.T) {
 	p.stop(t)
 }
 
-// TestGetSurvivesOverwrite overwrites a key over HTTP while a download of it
-// is half read; the download still returns the original bytes.
+// TestGetSurvivesOverwrite overwrites and then deletes a key over HTTP while
+// a download of it is half read; the download still returns the original
+// bytes.
 func TestGetSurvivesOverwrite(t *testing.T) {
 	p := startProc(t)
 	mustSucceed(t, p.addr, "create-bucket", "--bucket", "demo")
@@ -229,9 +230,11 @@ func TestGetSurvivesOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	putETag(t, p.addr, "--bucket", "demo", "--key", "k", "--body", writeFile(t, []byte("new content")))
+	mustSucceed(t, p.addr, "delete-object", "--bucket", "demo", "--key", "k") // feature 011
 	rest, err := io.ReadAll(resp.Body)
 	if err != nil || !bytes.Equal(append(first, rest...), original) {
-		t.Fatalf("download during overwrite: %d bytes, %v; want the original", len(first)+len(rest), err)
+		t.Fatalf("download during overwrite and delete: %d bytes, %v; want the original", len(first)+len(rest), err)
 	}
+	mustFail(t, p.addr, "(404)", "head-object", "--bucket", "demo", "--key", "k")
 	p.stop(t)
 }

@@ -64,6 +64,8 @@ func (f *fakeObjects) Head(string, string) (storage.Info, error) {
 	return storage.Info{}, storage.ErrNoSuchKey
 }
 
+func (f *fakeObjects) Delete(string, string) error { return nil }
+
 func (f *fakeObjects) taken() []putCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
