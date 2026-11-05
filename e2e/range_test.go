@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,46 @@ func TestRangeCLI(t *testing.T) {
 		got, cr := getRange(t, p.addr, tt.rng)
 		if !bytes.Equal(got, body[tt.first:tt.last+1]) || cr != fmt.Sprintf("bytes %d-%d/1000", tt.first, tt.last) {
 			t.Fatalf("%s: %d bytes, ContentRange %q", tt.rng, len(got), cr)
+		}
+	}
+	p.stop(t)
+}
+
+func TestRangeUnsatisfiableCLI(t *testing.T) {
+	p, _ := rangeFixture(t)
+	mustFail(t, p.addr, "(InvalidRange)", "get-object", "--bucket", "demo", "--key", "r.bin",
+		"--range", "bytes=1000-", filepath.Join(t.TempDir(), "out"))
+	p.stop(t)
+}
+
+func TestRangeIgnoredCLI(t *testing.T) {
+	p, body := rangeFixture(t)
+	for _, rng := range []string{"bytes=0-1,5-6", "bytes=abc"} {
+		got, cr := getRange(t, p.addr, rng)
+		if !bytes.Equal(got, body) || cr != "" {
+			t.Fatalf("%s: %d bytes, ContentRange %q; want the whole object", rng, len(got), cr)
+		}
+	}
+
+	// The CLI has no --if-range; use a plain client.
+	etag := putETag(t, p.addr, "--bucket", "demo", "--key", "r.bin", "--body", writeFile(t, body))
+	for _, tt := range []struct {
+		ifRange string
+		status  int
+	}{
+		{`"stale"`, http.StatusOK},
+		{etag, http.StatusPartialContent},
+	} {
+		req, _ := http.NewRequest(http.MethodGet, "http://"+p.addr+"/demo/r.bin", nil)
+		req.Header.Set("Range", "bytes=0-9")
+		req.Header.Set("If-Range", tt.ifRange)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != tt.status {
+			t.Fatalf("If-Range %s: %d, want %d", tt.ifRange, resp.StatusCode, tt.status)
 		}
 	}
 	p.stop(t)
