@@ -104,8 +104,10 @@ func TestPutObjectRejectsCLI(t *testing.T) {
 	p.stop(t)
 }
 
-// patternReader yields n bytes of a fixed pattern without holding them.
-type patternReader struct{ n int64 }
+// patternReader yields n bytes of a fixed pattern without holding them. Each
+// byte depends only on its position, so any part of the stream can be
+// regenerated whatever the read sizes.
+type patternReader struct{ n, off int64 }
 
 func (r *patternReader) Read(b []byte) (int, error) {
 	if r.n == 0 {
@@ -115,9 +117,10 @@ func (r *patternReader) Read(b []byte) (int, error) {
 		b = b[:r.n]
 	}
 	for i := range b {
-		b[i] = byte(i % 251)
+		b[i] = byte((r.off + int64(i)) % 251)
 	}
 	r.n -= int64(len(b))
+	r.off += int64(len(b))
 	return len(b), nil
 }
 
@@ -179,6 +182,31 @@ func TestPutObjectLargeFlatMemory(t *testing.T) {
 	}
 	if rss := peakRSS(t, p.cmd.Process.Pid); rss >= 64<<20 {
 		t.Fatalf("peak RSS after download %d MiB, want below 64 MiB", rss>>20)
+	}
+
+	// Its second half as a range (feature 010).
+	half := &patternReader{n: size}
+	if _, err := io.CopyN(io.Discard, half, size/2); err != nil {
+		t.Fatal(err)
+	}
+	wantHalf := md5.New()
+	if _, err := io.Copy(wantHalf, half); err != nil {
+		t.Fatal(err)
+	}
+	req, _ = http.NewRequest(http.MethodGet, "http://"+p.addr+"/demo/big", nil)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", size/2))
+	ranged, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHalf := md5.New()
+	n, err = io.Copy(gotHalf, ranged.Body)
+	_ = ranged.Body.Close()
+	if err != nil || ranged.StatusCode != http.StatusPartialContent || n != size/2 || !bytes.Equal(gotHalf.Sum(nil), wantHalf.Sum(nil)) {
+		t.Fatalf("range: status %d, %d bytes, %v", ranged.StatusCode, n, err)
+	}
+	if rss := peakRSS(t, p.cmd.Process.Pid); rss >= 64<<20 {
+		t.Fatalf("peak RSS after the range %d MiB, want below 64 MiB", rss>>20)
 	}
 	p.stop(t)
 }

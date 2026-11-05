@@ -64,6 +64,8 @@ var (
 		"Invalid Request"}
 	ErrNoSuchKey = APIError{http.StatusNotFound, "NoSuchKey",
 		"The specified key does not exist."}
+	ErrInvalidRange = APIError{http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+		"The requested range is not satisfiable"}
 	ErrPreconditionFailed = APIError{http.StatusPreconditionFailed, "PreconditionFailed",
 		"At least one of the pre-conditions you specified did not hold"}
 	// ErrBadChecksum is BadDigest for an x-amz-checksum-* value, with a

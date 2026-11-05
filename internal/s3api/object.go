@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -56,13 +57,11 @@ func GetObjectOp(store ObjectStore, log *slog.Logger) Op {
 			return
 		}
 		defer rd.Close()
-		if status := evaluateConditions(r.Header, info); status != http.StatusOK {
-			writeConditional(w, r, status, info)
+		first, length, ok := startObjectResponse(w, r, info)
+		if !ok {
 			return
 		}
-		writeObjectHeaders(w.Header(), info)
-		w.WriteHeader(http.StatusOK)
-		src := &readErrRecorder{r: rd}
+		src := &readErrRecorder{r: io.NewSectionReader(rd, first, length)}
 		if _, err := io.CopyBuffer(w, src, make([]byte, copyBufferSize)); err != nil {
 			if src.err != nil {
 				storageError(log, r, "GetObject", t, src.err)
@@ -83,13 +82,38 @@ func HeadObjectOp(store ObjectStore, log *slog.Logger) Op {
 			WriteError(w, r, storageError(log, r, "HeadObject", t, err))
 			return
 		}
-		if status := evaluateConditions(r.Header, info); status != http.StatusOK {
-			writeConditional(w, r, status, info)
-			return
-		}
-		writeObjectHeaders(w.Header(), info)
-		w.WriteHeader(http.StatusOK)
+		startObjectResponse(w, r, info)
 	}
+}
+
+// startObjectResponse writes the status and headers of a GET or HEAD answer
+// for info: 412/304 from the conditional headers, then 416 or 206 for a
+// Range (unless If-Range does not match), else 200. It returns the part of
+// the body to send, or false when the response needs no body.
+func startObjectResponse(w http.ResponseWriter, r *http.Request, info storage.Info) (first, length int64, ok bool) {
+	if status := evaluateConditions(r.Header, info); status != http.StatusOK {
+		writeConditional(w, r, status, info)
+		return 0, 0, false
+	}
+	var rng byteRange
+	if v := r.Header.Get("If-Range"); v == "" || ifRangeMatches(v, info) {
+		rng = parseRange(r.Header.Get("Range"), info.Size)
+	}
+	if rng.kind == rangeUnsatisfiable {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", info.Size))
+		WriteError(w, r, ErrInvalidRange)
+		return 0, 0, false
+	}
+	writeObjectHeaders(w.Header(), info)
+	if rng.kind == rangeServe {
+		length = rng.last - rng.first + 1
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rng.first, rng.last, info.Size))
+		w.WriteHeader(http.StatusPartialContent)
+		return rng.first, length, r.Method == http.MethodGet
+	}
+	w.WriteHeader(http.StatusOK)
+	return 0, info.Size, r.Method == http.MethodGet
 }
 
 // readErrRecorder remembers a read error, to tell a storage failure from a

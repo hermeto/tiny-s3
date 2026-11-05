@@ -120,8 +120,8 @@ func TestDefaultCLIUploads(t *testing.T) {
 }
 
 // putFramed sends an aws-chunked PUT of stream (decoded length 11) and
-// returns the status and body. With cut, the connection is half-closed
-// before the declared Content-Length is reached.
+// returns the status and body. With cut, the declared Content-Length is 100
+// bytes more than the stream and the connection is half-closed after it.
 func putFramed(t *testing.T, addr, key, stream, contentSHA string, header map[string]string, cut bool) (int, string) {
 	t.Helper()
 	length := len(stream)
@@ -144,7 +144,12 @@ func putFramed(t *testing.T, addr, key, stream, contentSHA string, header map[st
 	if _, err := io.WriteString(conn, b.String()); err != nil {
 		t.Fatal(err)
 	}
-	_ = conn.(*net.TCPConn).CloseWrite()
+	if cut {
+		// Only a cut request half-closes: net/http treats a half-close as
+		// the client leaving and cancels the request context, which would
+		// make a complete upload fail at random.
+		_ = conn.(*net.TCPConn).CloseWrite()
+	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
 		t.Fatal(err)
