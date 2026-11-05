@@ -94,3 +94,7 @@ No constitution conflicts. Coverage: FR-001–FR-010 and SC-001–SC-004 each ma
 - Rebuilding the index in `Open` made the storage test helper `reopen` apply its faults during `Open`'s new record reads. `reopen` now opens cleanly and applies the faults to later operations, which is what every caller meant; one s3api test uses `Nth: 2` for the same reason.
 - The CLI's paginator merges pages and drops `KeyCount`; e2e checks of per-page fields use `--no-paginate`.
 - The timing test (T022) passed on its first run; it guards SC-004 against regressions.
+
+## Phase 7: Convergence
+
+- [ ] T026 Write a timing test in `internal/s3api/list_timing_test.go` (build tag `!race`) that serves `GET /demo?list-type=2` through `ListObjectsV2Op` over a store with 10,000 keys and requires the full 1,000-entry XML response within 100 ms per SC-004 (partial)
