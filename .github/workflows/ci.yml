@@ -70,6 +70,40 @@ jobs:
           path: ${{ runner.temp }}/gobuild
           key: gobuild-${{ runner.os }}-${{ matrix.target }}-${{ github.sha }}
 
+  # make e2e: the Go e2e tests, the container suite against the image built
+  # from the Dockerfile, and the demo. Its own build cache, saved only from
+  # main like the gates' caches.
+  e2e:
+    name: make e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-e2e-${{ github.sha }}
+          restore-keys: gobuild-${{ runner.os }}-e2e-
+
+      - run: make e2e
+        env:
+          GOMOD_CACHE: ${{ runner.temp }}/gomod
+          GOBUILD_CACHE: ${{ runner.temp }}/gobuild
+
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gobuild
+          key: gobuild-${{ runner.os }}-e2e-${{ github.sha }}
+
   image:
     name: docker build
     runs-on: ubuntu-24.04
@@ -90,11 +124,12 @@ jobs:
           # Only main writes the layer cache, for the same reason as the Go caches.
           cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'type=gha,mode=max,scope=image' || '' }}
 
-  # Publishes only from main and only after all five checks pass. The rebuild
-  # is a layer-cache hit, so it pushes the layers `docker build` produced.
+  # Publishes only from main and only after every check passes, including
+  # make e2e. The rebuild is a layer-cache hit, so it pushes the layers
+  # `docker build` produced.
   publish:
     name: publish
-    needs: [gate, image]
+    needs: [gate, e2e, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
