@@ -41,6 +41,6 @@ Expected:
 1. Exit 0.
 2. Exit 0, ETag `"5eb63bbbe01eeed093cb22bb8f5acdc3"` (the CLI sent `x-amz-checksum-crc64nvme`, verified).
 3. Exit 0, same ETag.
-4. Exit 254, `(BadDigest)`.
+4. Exit 254, `(BadDigest)` with the checksum message.
 5. `HTTP/1.1 200 OK` and `ETag: "5eb63bbbe01eeed093cb22bb8f5acdc3"`: the framing was removed.
-6. `HTTP/1.1 400 Bad Request` (BadDigest).
+6. `HTTP/1.1 400 Bad Request` (`BadDigest`, "The checksum you specified did not match the calculated checksum.").
