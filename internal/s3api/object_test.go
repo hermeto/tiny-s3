@@ -54,6 +54,16 @@ func (f *fakeObjects) Put(_ context.Context, bucket, key string, body io.Reader,
 	return storage.Info{Bucket: bucket, Key: key, Size: size, MD5: hex.EncodeToString(sum[:])}, nil
 }
 
+// Get and Head are not used by the PutObject tests; reads go through a real
+// store.
+func (f *fakeObjects) Get(string, string) (storage.Info, storage.Reader, error) {
+	return storage.Info{}, nil, storage.ErrNoSuchKey
+}
+
+func (f *fakeObjects) Head(string, string) (storage.Info, error) {
+	return storage.Info{}, storage.ErrNoSuchKey
+}
+
 func (f *fakeObjects) taken() []putCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()

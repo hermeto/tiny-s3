@@ -48,6 +48,8 @@ func TestAPIErrorValues(t *testing.T) {
 		{ErrBadDigest, 400, "BadDigest", "The Content-MD5 you specified did not match what we received."},
 		{ErrInvalidArgument, 400, "InvalidArgument", "Invalid Argument"},
 		{ErrInvalidRequest, 400, "InvalidRequest", "Invalid Request"},
+		{ErrNoSuchKey, 404, "NoSuchKey", "The specified key does not exist."},
+		{ErrPreconditionFailed, 412, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold"},
 		{ErrBadChecksum, 400, "BadDigest", "The checksum you specified did not match the calculated checksum."},
 	}
 	for _, tt := range tests {

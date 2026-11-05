@@ -62,6 +62,10 @@ var (
 		"Invalid Argument"}
 	ErrInvalidRequest = APIError{http.StatusBadRequest, "InvalidRequest",
 		"Invalid Request"}
+	ErrNoSuchKey = APIError{http.StatusNotFound, "NoSuchKey",
+		"The specified key does not exist."}
+	ErrPreconditionFailed = APIError{http.StatusPreconditionFailed, "PreconditionFailed",
+		"At least one of the pre-conditions you specified did not hold"}
 	// ErrBadChecksum is BadDigest for an x-amz-checksum-* value, with a
 	// message that does not blame Content-MD5.
 	ErrBadChecksum = APIError{http.StatusBadRequest, "BadDigest",

@@ -19,6 +19,7 @@ var storageErrors = []struct {
 	{storage.ErrNoSuchBucket, ErrNoSuchBucket},
 	{storage.ErrBucketExists, ErrBucketAlreadyOwnedByYou},
 	{storage.ErrKeyTooLong, ErrKeyTooLong},
+	{storage.ErrNoSuchKey, ErrNoSuchKey},
 	{storage.ErrEntityTooLarge, ErrEntityTooLarge},
 	{storage.ErrBadDigest, ErrBadDigest},
 	{storage.ErrIncompleteBody, ErrIncompleteBody},
