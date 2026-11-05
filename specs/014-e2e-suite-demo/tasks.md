@@ -15,7 +15,7 @@
 
 ## Phase 2: Foundational
 
-- [ ] T003 Write `scripts/e2e/lib.sh`: run-scoped names (`tiny-s3-e2e-<pid>-…`), create network and volume, start the server (alias `s3d`, no published port) and wait for its N-th `listening` line, start the client (e2e image, `sleep infinity`, `/suite` read-only, credentials and region) and the inspector (volume read-only), `in_client`/`in_inspector` exec helpers, `pass`/`fail` output, and a cleanup function for an `EXIT INT TERM` trap
+- [ ] T003 Write `scripts/e2e/lib.sh`: run-scoped names (`tiny-s3-e2e-<pid>-…`), create network and volume, start the server (alias `s3d`, no published port) and wait for its N-th `listening` line, start the client (e2e image, `sleep infinity`, `/suite` read-only, credentials and region) and the inspector (volume read-only), `in_client`/`in_inspector` exec helpers, `pass`/`fail` output, and a cleanup function for an `EXIT INT TERM` trap; host-side code must run on Bash 3.2 (macOS default: no associative arrays, `mapfile`, `wait -n` or `${v,,}`)
 
 ---
 
@@ -23,7 +23,7 @@
 
 - [ ] T004 [US1] Write `scripts/e2e/checks.sh` with the groups `bucket`, `object`, `range`, `list` and `delete` per `contracts/suite.md` (keys `small.txt`, `big.bin` 100 MiB, `dir/sub/ünïcødé ✓.txt`; `cmp` for every comparison; 2,500 keys uploaded with `aws s3 cp --recursive` and paged by hand with `--no-paginate --max-keys 500`)
 - [ ] T005 [US1] Write `scripts/e2e/run.sh`: build the server image from `Dockerfile` and the e2e image, start the run's resources, run the groups in order, print `e2e suite: PASSED` or the failed check with the server's log tail, exit 0/1
-- [ ] T006 [US1] Check the suite catches breakage (SC-002): run it against an image with one operation broken on purpose (a temporary local change that is not committed, e.g. a wrong ETag) and confirm it exits 1 naming the failed check; record the run in the implementation notes
+- [ ] T006 [US1] Check the suite catches breakage (SC-002): run it against an image with one operation broken on purpose (a temporary local change that is not committed, e.g. a wrong ETag) and confirm it exits 1 naming the failed check; revert and confirm `git status` shows no source change; record the run in the implementation notes
 - [ ] T007 [US1] Check cleanup (SC-003): after a passing run, a failing run and a run interrupted with SIGINT, no container, network or volume named `tiny-s3-e2e-` remains; and a running Compose stack still answers on port 9000 during and after a run
 
 ---
@@ -51,8 +51,8 @@
 
 - [ ] T012 Update `README.md`: Development table (`make e2e`, `make shellcheck`), CI table and ruleset JSON with `make e2e`, the demo, and a `### 014 end-to-end suite and demo` design section
 - [ ] T013 Run `make vet test race cover e2e` and `make shellcheck`; 100% for every `internal/` package
-- [ ] T014 Run `quickstart.md`, including the Compose check, then `docker compose down -v`
-- [ ] T015 After pushing, confirm the `make e2e` check runs and passes in CI on the pull request's branch
+- [ ] T014 Run `quickstart.md`, including the Compose check, then `docker compose down -v`; record the demo's duration without pauses (SC-004: under 3 minutes)
+- [ ] T015 After pushing, confirm the `make e2e` check runs and passes in CI on the pull request's branch, and record its duration (SC-001: under 15 minutes)
 
 ## Dependencies & Execution Order
 
@@ -65,3 +65,16 @@
 ## Implementation Strategy
 
 Library and checks first, then the crash test, then wiring into make and CI, then the demo.
+
+## Analysis Remediation (2026-11-05)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| C1 | MEDIUM | FR-008 (Docker and Bash only) holds only if the host-side scripts run on macOS's Bash 3.2, which the plan states but no task enforced. | T003 names the Bash 3.2 constraints for all host-side code. |
+| U1 | MEDIUM | SC-001's 15-minute CI bound had no task measuring it. | T015 records the CI duration. |
+| U2 | LOW | SC-004's 3-minute demo bound had no task measuring it. | T014 records the demo duration. |
+| U3 | LOW | T006's deliberate breakage could leak into a commit. | T006 checks `git status` after reverting. |
+
+No constitution conflicts: the new CI check is named after its command and runs the Makefile target; the required checks are unchanged. Coverage: FR-001–FR-010 and SC-001–SC-004 each map to at least one task (100%).
