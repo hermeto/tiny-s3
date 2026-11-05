@@ -192,7 +192,7 @@ func TestCreateBucketOpStoreErrors(t *testing.T) {
 				t.Fatalf("log = %v, want one record", recs)
 			}
 			rec := recs[0]
-			if rec["msg"] != "bucket_error" || rec["level"] != "ERROR" || rec["op"] != "CreateBucket" ||
+			if rec["msg"] != "storage_error" || rec["level"] != "ERROR" || rec["op"] != "CreateBucket" ||
 				rec["bucket"] != "demo" || rec["error"] != "disk on fire" ||
 				rec["request_id"] != w.Header().Get("x-amz-request-id") {
 				t.Fatalf("log record = %v", rec)
@@ -235,7 +235,7 @@ func TestCheckBucket(t *testing.T) {
 					}
 					return
 				}
-				if len(recs) != 1 || recs[0]["msg"] != "bucket_error" || recs[0]["op"] != "CheckBucket" || recs[0]["bucket"] != "demo" {
+				if len(recs) != 1 || recs[0]["msg"] != "storage_error" || recs[0]["op"] != "CheckBucket" || recs[0]["bucket"] != "demo" {
 					t.Fatalf("log = %v", recs)
 				}
 			})

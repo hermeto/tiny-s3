@@ -25,10 +25,20 @@ type record struct {
 	MD5          string    `json:"md5"`
 	LastModified time.Time `json:"last_modified"`
 	Data         string    `json:"data"`
+	// Optional since feature 007; older records have neither.
+	ContentType string            `json:"content_type,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 func (r record) info() Info {
-	return Info{Bucket: r.Bucket, Key: r.Key, Size: r.Size, MD5: r.MD5, LastModified: r.LastModified}
+	info := Info{
+		Bucket: r.Bucket, Key: r.Key, Size: r.Size, MD5: r.MD5, LastModified: r.LastModified,
+		ContentType: r.ContentType, Metadata: r.Metadata,
+	}
+	if info.ContentType == "" {
+		info.ContentType = DefaultContentType
+	}
+	return info
 }
 
 // readRecord returns the committed record of name, ErrNoSuchKey when there is

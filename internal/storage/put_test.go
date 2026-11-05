@@ -5,8 +5,13 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -21,7 +26,7 @@ func md5hex(b []byte) string {
 // put stores body under bucket/key with its exact length and no digest.
 func put(t *testing.T, s *Store, bucket, key string, body []byte) Info {
 	t.Helper()
-	info, err := s.Put(context.Background(), bucket, key, bytes.NewReader(body), int64(len(body)), nil)
+	info, err := s.Put(context.Background(), bucket, key, bytes.NewReader(body), int64(len(body)), PutOptions{})
 	if err != nil {
 		t.Fatalf("Put(%q, %q): %v", bucket, key, err)
 	}
@@ -50,8 +55,8 @@ func TestPutHeadGetRoundTrip(t *testing.T) {
 	for i, key := range keys {
 		body := bytes.Repeat([]byte{byte('a' + i)}, 100_000+i)
 		info := put(t, s, "bucket", key, body)
-		want := Info{Bucket: "bucket", Key: key, Size: int64(len(body)), MD5: md5hex(body), LastModified: fixedTime.UTC()}
-		if info != want {
+		want := Info{Bucket: "bucket", Key: key, Size: int64(len(body)), MD5: md5hex(body), LastModified: fixedTime.UTC(), ContentType: DefaultContentType}
+		if !reflect.DeepEqual(info, want) {
 			t.Fatalf("Put info = %+v, want %+v", info, want)
 		}
 		if info.LastModified.Location() != time.UTC {
@@ -143,7 +148,7 @@ func TestInvalidArgumentsWriteNothing(t *testing.T) {
 		{"too large", "k", MaxObjectSize + 1, ErrEntityTooLarge},
 	}
 	for _, tt := range tests {
-		if _, err := s.Put(context.Background(), "b", tt.key, strings.NewReader(""), tt.size, nil); !errors.Is(err, tt.want) {
+		if _, err := s.Put(context.Background(), "b", tt.key, strings.NewReader(""), tt.size, PutOptions{}); !errors.Is(err, tt.want) {
 			t.Errorf("%s: Put = %v, want %v", tt.name, err, tt.want)
 		}
 		if tt.size != 0 {
@@ -209,11 +214,11 @@ func TestPutRejectsBadInputWithoutTrace(t *testing.T) {
 			t.Parallel()
 			s, root := newStore(t, nil)
 			prev := put(t, s, "b", "k", []byte("previous"))
-			_, err := s.Put(tt.ctx, "b", "k", tt.body, tt.size, tt.md5)
+			_, err := s.Put(tt.ctx, "b", "k", tt.body, tt.size, PutOptions{ContentMD5: tt.md5})
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Put = %v, want %v", err, tt.want)
 			}
-			if head, err := s.Head("b", "k"); err != nil || head != prev {
+			if head, err := s.Head("b", "k"); err != nil || !reflect.DeepEqual(head, prev) {
 				t.Fatalf("previous version = (%+v, %v), want %+v", head, err, prev)
 			}
 			if _, b := readAll(t, s, "b", "k"); string(b) != "previous" {
@@ -227,8 +232,89 @@ func TestPutRejectsBadInputWithoutTrace(t *testing.T) {
 	t.Run("matching digest", func(t *testing.T) {
 		t.Parallel()
 		s, _ := newStore(t, nil)
-		if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(good), 5, sum[:]); err != nil {
+		if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(good), 5, PutOptions{ContentMD5: sum[:]}); err != nil {
 			t.Fatalf("Put with matching Content-MD5: %v", err)
 		}
 	})
+}
+
+func TestPutContentTypeAndMetadata(t *testing.T) {
+	t.Parallel()
+	s, _ := newStore(t, nil)
+	opts := PutOptions{ContentType: "text/plain", Metadata: map[string]string{"owner": "alice", "team": "a,b"}}
+	info, err := s.Put(context.Background(), "b", "k", strings.NewReader("hello"), 5, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ContentType != "text/plain" || !maps.Equal(info.Metadata, opts.Metadata) {
+		t.Fatalf("Put info = %+v", info)
+	}
+	head, err := s.Head("b", "k")
+	if err != nil || !reflect.DeepEqual(head, info) {
+		t.Fatalf("Head = %+v, %v; want %+v", head, err, info)
+	}
+	got, _ := readAll(t, s, "b", "k")
+	if !reflect.DeepEqual(got, info) {
+		t.Fatalf("Get = %+v, want %+v", got, info)
+	}
+
+	// An overwrite without metadata replaces it and gets the default type.
+	info = put(t, s, "b", "k", []byte("again"))
+	if info.ContentType != DefaultContentType || info.Metadata != nil {
+		t.Fatalf("overwrite info = %+v", info)
+	}
+	if head, _ := s.Head("b", "k"); head.ContentType != DefaultContentType || head.Metadata != nil {
+		t.Fatalf("overwrite Head = %+v", head)
+	}
+}
+
+func TestRecordWithoutContentType(t *testing.T) {
+	t.Parallel()
+	s, root := newStore(t, nil)
+	put(t, s, "b", "k", []byte("x"))
+	path := filepath.Join(root, "meta", recordName("b", "k")+".json")
+	var rec map[string]any
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	delete(rec, "content_type")
+	delete(rec, "metadata")
+	raw, _ = json.Marshal(rec)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	head, err := s.Head("b", "k")
+	if err != nil || head.ContentType != DefaultContentType || head.Metadata != nil {
+		t.Fatalf("Head = %+v, %v; want default type and no metadata", head, err)
+	}
+}
+
+// earlyEOF yields its bytes, then io.ErrUnexpectedEOF, as net/http does for a
+// body that ends before its Content-Length.
+type earlyEOF struct{ r io.Reader }
+
+func (e *earlyEOF) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err == io.EOF {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func TestPutUnexpectedEOFIsIncompleteBody(t *testing.T) {
+	t.Parallel()
+	s, root := newStore(t, nil)
+	_, err := s.Put(context.Background(), "b", "k", &earlyEOF{strings.NewReader("short")}, 100, PutOptions{})
+	if !errors.Is(err, ErrIncompleteBody) {
+		t.Fatalf("Put = %v, want ErrIncompleteBody", err)
+	}
+	for _, dir := range []string{"tmp", "data", "meta"} {
+		if got := entries(t, root, dir); len(got) != 0 {
+			t.Fatalf("%s = %v, want empty", dir, got)
+		}
+	}
 }

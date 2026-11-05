@@ -74,7 +74,7 @@ func TestConcurrentPutsHaveOneWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			b := body(i)
-			if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(b), int64(len(b)), nil); err != nil {
+			if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(b), int64(len(b)), PutOptions{}); err != nil {
 				t.Errorf("Put %d: %v", i, err)
 			}
 		}()
@@ -128,7 +128,7 @@ func TestConcurrentPutsAndDeletes(t *testing.T) {
 				return
 			}
 			b := body(i)
-			if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(b), int64(len(b)), nil); err != nil {
+			if _, err := s.Put(context.Background(), "b", "k", bytes.NewReader(b), int64(len(b)), PutOptions{}); err != nil {
 				t.Errorf("Put %d: %v", i, err)
 			}
 		}()

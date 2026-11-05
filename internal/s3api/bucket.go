@@ -3,7 +3,6 @@ package s3api
 import (
 	"bytes"
 	"encoding/xml"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,7 +26,7 @@ type BucketStore interface {
 
 // BucketOps returns Ops with the bucket operations served by store. Storage
 // errors without an S3 meaning answer InternalError and are logged as
-// bucket_error.
+// storage_error.
 func BucketOps(store BucketStore, log *slog.Logger) Ops {
 	b := bucketOps{store: store, log: log}
 	return Ops{
@@ -43,29 +42,10 @@ type bucketOps struct {
 	log   *slog.Logger
 }
 
-// apiError maps a storage error to its S3 error, logging the errors that
-// have none as bucket_error.
-func (b bucketOps) apiError(r *http.Request, op, bucket string, err error) APIError {
-	switch {
-	case errors.Is(err, storage.ErrInvalidBucketName):
-		return ErrInvalidBucketName
-	case errors.Is(err, storage.ErrNoSuchBucket):
-		return ErrNoSuchBucket
-	case errors.Is(err, storage.ErrBucketExists):
-		return ErrBucketAlreadyOwnedByYou
-	}
-	b.log.Error("bucket_error",
-		"request_id", RequestID(r.Context()),
-		"op", op,
-		"bucket", bucket,
-		"error", err.Error())
-	return ErrInternalError
-}
-
 // check is the bucket gate (Ops.CheckBucket).
 func (b bucketOps) check(r *http.Request, bucket string) (APIError, bool) {
 	if _, err := b.store.HeadBucket(bucket); err != nil {
-		return b.apiError(r, "CheckBucket", bucket, err), false
+		return storageError(b.log, r, "CheckBucket", Target{Bucket: bucket}, err), false
 	}
 	return APIError{}, true
 }
@@ -86,7 +66,7 @@ func (b bucketOps) create(w http.ResponseWriter, r *http.Request, t Target) {
 		return
 	}
 	if _, err := b.store.CreateBucket(t.Bucket); err != nil {
-		WriteError(w, r, b.apiError(r, "CreateBucket", t.Bucket, err))
+		WriteError(w, r, storageError(b.log, r, "CreateBucket", t, err))
 		return
 	}
 	w.Header().Set("Location", "/"+t.Bucket)
