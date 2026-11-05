@@ -30,7 +30,7 @@ No setup: the e2e image with the aws CLI exists since 006.
 
 **Independent Test**: Upload a file and compare the ETag with its MD5.
 
-- [ ] T006 [P] [US1] Write failing handler tests in `internal/s3api/object_test.go` with a fake `ObjectStore`: 200 with `ETag: "<md5>"` and empty body; the store receives bucket, key, declared size and the body bytes; overwrite; zero-length body; keys with `/`, spaces, `+` and UTF-8 reach the store unchanged
+- [ ] T006 [P] [US1] Write failing handler tests in `internal/s3api/object_test.go` with a fake `ObjectStore`: 200 with `ETag: "<md5>"`, empty body and no S3 headers besides `ETag` and `x-amz-request-id` (FR-014); the store receives bucket, key, declared size and the body bytes; overwrite; zero-length body; keys with `/`, spaces, `+` and UTF-8 reach the store unchanged
 - [ ] T007 [P] [US1] Write a failing integration test in `internal/app/app_test.go` through `Main`: create a bucket, PUT an object, then after stopping open the store on the same data dir and `Head` the key (size, MD5)
 - [ ] T008 [US1] Implement `ObjectStore` and `PutObjectOp` in `internal/s3api/object.go`; wire `ops.PutObject` in `internal/app/app.go`
 - [ ] T009 [US1] Write `e2e/objects_test.go`: `aws s3api put-object` of a file to `a/b.txt` returns the quoted MD5 ETag; overwrite returns the new ETag; missing bucket → `(NoSuchBucket)`
@@ -50,7 +50,7 @@ No setup: the e2e image with the aws CLI exists since 006.
 ## Phase 5: User Story 3 - Reject corrupt or incomplete uploads (Priority: P1)
 
 - [ ] T013 [P] [US3] Write failing tests in `internal/s3api/object_test.go`: aws-chunked (`Content-Encoding: aws-chunked`, and `x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER`) → 501 without reading the body; no length (`Transfer-Encoding: chunked`) → 411; `Content-MD5` not base64 or not 16 bytes → `InvalidDigest`; a valid `Content-MD5` reaches the store as raw bytes; store errors map per R6; none of the rejected requests reads the body
-- [ ] T014 [P] [US3] Write a failing test in `internal/s3api/object_test.go` on a real `httptest.Server` with the real store: a raw request declaring 100 bytes that sends 10 and half-closes gets 400 `IncompleteBody`, and the key does not exist afterwards
+- [ ] T014 [P] [US3] Write a failing test in `internal/s3api/object_test.go` on a real `httptest.Server` with the real store: a raw request declaring 100 bytes that sends 10 and half-closes gets 400 `IncompleteBody`, the key does not exist afterwards, and the store's `tmp/` and `data/` are empty (SC-003)
 - [ ] T015 [US3] Implement the aws-chunked, length and `Content-MD5` checks in `internal/s3api/object.go` (research R4 order)
 - [ ] T016 [US3] Add e2e tests to `e2e/objects_test.go`: wrong `--content-md5` → `(BadDigest)`; 1025-byte key → `(KeyTooLongError)`; raw early disconnect against the binary → 400 `IncompleteBody`; raw `Transfer-Encoding: chunked` → 411 `MissingContentLength`
 
@@ -58,7 +58,7 @@ No setup: the e2e image with the aws CLI exists since 006.
 
 ## Phase 6: User Story 4 - Large objects with flat memory (Priority: P2)
 
-- [ ] T017 [P] [US4] Write a failing handler test in `internal/s3api/object_test.go`: a declared length above 5 GiB → 400 `EntityTooLarge` without reading the body (real store)
+- [ ] T017 [P] [US4] Write a failing handler test in `internal/s3api/object_test.go`: a declared length above 5 GiB → 400 `EntityTooLarge` and a 1025-byte key → 400 `KeyTooLongError`, both without reading the body (real store, FR-008)
 - [ ] T018 [US4] Add a 2 GiB e2e test in `e2e/objects_test.go`: stream a generated body with a Go client, compare the ETag with the client-side MD5, and require `VmHWM` of the s3d process below 64 MiB (research R7)
 
 ---
@@ -83,3 +83,16 @@ No setup: the e2e image with the aws CLI exists since 006.
 ## Implementation Strategy
 
 Foundational first (signature change), then US1 as MVP, then metadata, rejections and the large-upload check; the full gate and quickstart once at the end.
+
+## Analysis Remediation (2026-11-04)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| C1 | MEDIUM | SC-003 asks for no leftover temporary data after a damaged upload; T014 checked only that the key is absent. | T014 also checks that `tmp/` and `data/` are empty. |
+| C2 | MEDIUM | FR-008 says key and size limits apply before the body is read; no task asserted that for the key limit. | T017 covers both limits without a body read. |
+| C3 | LOW | FR-014 (only `ETag` and request ID on success) had no assertion. | Added to T006. |
+| N1 | LOW | Concurrent uploads to one key (edge case) and durability before the answer (FR-002) have no new HTTP-level task. | Covered by the 005 engine tests (SC-004 there, write-order history test); the handler answers only after `Store.Put` returns. No task added. |
+
+No constitution conflicts. Coverage: FR-001–FR-015 and SC-001–SC-004 each map to at least one task or to an existing 005 test (100%).
