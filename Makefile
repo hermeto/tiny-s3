@@ -31,7 +31,7 @@ DOCKER_RUN := $(DOCKER_RUN_IN) $(GO_IMAGE)
 # The e2e image adds the AWS CLI v2 to the same Go toolchain (e2e/Dockerfile).
 E2E_IMAGE := tiny-s3-e2e
 
-.PHONY: test race vet cover e2e clean-cache
+.PHONY: test race vet cover e2e shellcheck clean-cache
 
 test:
 	$(DOCKER_RUN) go test ./...
@@ -48,11 +48,21 @@ vet:
 cover:
 	$(DOCKER_RUN) bash scripts/cover-gate.sh
 
-# Builds the real s3d binary and drives it with real signals and the real
-# `aws s3api` CLI (e2e/).
+# Three steps, each failing the target: the Go tests that build the real s3d
+# binary and drive it with real signals and the aws CLI (e2e/); the container
+# suite against the image built from the Dockerfile (scripts/e2e/run.sh); and
+# the demo without pauses, so it keeps working. Needs Docker and Bash.
 e2e:
 	docker build -q --build-arg GO_IMAGE=$(GO_IMAGE) -t $(E2E_IMAGE) -f e2e/Dockerfile e2e
 	$(DOCKER_RUN_IN) $(E2E_IMAGE) go test -tags e2e -count=1 ./e2e/...
+	bash scripts/e2e/run.sh
+	DEMO_PAUSE=0 bash scripts/demo.sh
+
+# Lints every shell script; the image is pinned like the Go one.
+SHELLCHECK_IMAGE := koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb
+
+shellcheck:
+	docker run --rm -v "$(CURDIR)":/src -w /src $(SHELLCHECK_IMAGE) scripts/*.sh scripts/e2e/*.sh
 
 clean-cache:
 	docker volume rm -f tiny-s3-gomod tiny-s3-gobuild
