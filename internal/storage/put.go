@@ -44,7 +44,7 @@ func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, siz
 		_ = s.fsys.Remove(s.dataPath(version))
 		return Info{}, err
 	}
-	if err := s.commit(recordName(bucket, key), tmp, version); err != nil {
+	if err := s.commit(rec, tmp); err != nil {
 		return Info{}, err
 	}
 	return rec.info(), nil
@@ -181,16 +181,18 @@ func (s *Store) writeTemp(pattern string, b []byte) (path string, err error) {
 	return f.Name(), nil
 }
 
-// commit makes the temp record tmp, which points at data version, the
-// committed record of name. The rename into meta/ is the commit point and the
-// meta/ sync makes it durable; only then is the previous version's data
-// removed, best effort. On failure the new version is not left visible: a
-// failed meta/ sync after the rename rolls the record back. The new data file
-// is removed whenever no record points at it any more.
-func (s *Store) commit(name, tmp, version string) (err error) {
+// commit makes the temp record tmp, holding rec, the committed record of
+// rec's key. The rename into meta/ is the commit point and the meta/ sync
+// makes it durable; only then is the previous version's data removed, best
+// effort. On failure the new version is not left visible: a failed meta/ sync
+// after the rename rolls the record back. The new data file is removed
+// whenever no record points at it any more. The index follows the record
+// file at each step, under the key lock.
+func (s *Store) commit(rec record, tmp string) (err error) {
+	name := recordName(rec.Bucket, rec.Key)
 	unlock := s.locks.lock(name)
 	defer unlock()
-	newData := s.dataPath(version)
+	newData := s.dataPath(rec.Data)
 
 	prev, err := s.readRecord(name)
 	switch {
@@ -207,8 +209,9 @@ func (s *Store) commit(name, tmp, version string) (err error) {
 		_ = s.fsys.Remove(newData)
 		return fmt.Errorf("storage: rename record: %w", err)
 	}
+	s.index.put(rec.Bucket, rec.Key, entryOf(rec.info()))
 	if err := s.syncDir(metaDir); err != nil {
-		if rbErr := s.rollback(name, prev); rbErr != nil {
+		if rbErr := s.rollback(rec, prev); rbErr != nil {
 			// The record may still point at the new data, so keep it: the
 			// object is then the complete new version, never a partial one.
 			return errors.Join(err, rbErr)
@@ -222,14 +225,16 @@ func (s *Store) commit(name, tmp, version string) (err error) {
 	return nil
 }
 
-// rollback restores the committed state before a commit whose meta/ sync
-// failed: it re-commits prev, or removes the record when there was none.
-func (s *Store) rollback(name string, prev record) error {
-	path := s.recordPath(name)
+// rollback restores the committed state before the commit of rec whose
+// meta/ sync failed: it re-commits prev, or removes the record when there was
+// none. The index follows whichever record file is left.
+func (s *Store) rollback(rec, prev record) error {
+	path := s.recordPath(recordName(rec.Bucket, rec.Key))
 	if prev.Data == "" {
 		if err := s.fsys.Remove(path); err != nil {
 			return fmt.Errorf("storage: rollback: remove record: %w", err)
 		}
+		s.index.remove(rec.Bucket, rec.Key)
 		return s.syncDir(metaDir)
 	}
 	tmp, err := s.writeRecord(prev)
@@ -240,6 +245,7 @@ func (s *Store) rollback(name string, prev record) error {
 		_ = s.fsys.Remove(tmp)
 		return fmt.Errorf("storage: rollback: rename record: %w", err)
 	}
+	s.index.put(prev.Bucket, prev.Key, entryOf(prev.info()))
 	return s.syncDir(metaDir)
 }
 

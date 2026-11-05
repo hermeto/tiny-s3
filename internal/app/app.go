@@ -37,6 +37,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, fsys fsx
 		ops.GetObject = s3api.GetObjectOp(store, log)
 		ops.HeadObject = s3api.HeadObjectOp(store, log)
 		ops.DeleteObject = s3api.DeleteObjectOp(store, log)
+		ops.ListObjectsV2 = s3api.ListObjectsV2Op(store, log)
 		return s3api.NewHandler(ops, log)
 	})
 }

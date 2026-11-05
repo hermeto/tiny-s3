@@ -102,6 +102,7 @@ type Store struct {
 	root  string
 	now   func() time.Time
 	locks keyLocks
+	index *objectIndex
 
 	// bmu guards buckets. CreateBucket holds it exclusively for its whole
 	// write path, so concurrent creates of one name have one winner.
@@ -110,8 +111,10 @@ type Store struct {
 }
 
 // Open creates tmp/, data/, meta/ and buckets/ under root if needed, removes
-// every leftover in tmp/ from writes interrupted by a crash, and loads every
-// bucket record. A bucket record that cannot be read or is invalid fails Open.
+// every leftover in tmp/ from writes interrupted by a crash, loads every
+// bucket record and rebuilds the object index from the metadata records. A
+// bucket record that cannot be read or is invalid fails Open; an object
+// record that cannot be decoded is left out of the index.
 func Open(fsys fsx.FS, root string) (*Store, error) {
 	for _, dir := range []string{tmpDir, dataDir, metaDir, bucketsDir} {
 		if err := fsys.MkdirAll(filepath.Join(root, dir), dirPerm); err != nil {
@@ -128,12 +131,15 @@ func Open(fsys fsx.FS, root string) (*Store, error) {
 			return nil, fmt.Errorf("storage: remove leftover: %w", err)
 		}
 	}
-	s := &Store{fsys: fsys, root: root, now: time.Now}
+	s := &Store{fsys: fsys, root: root, now: time.Now, index: newObjectIndex()}
 	buckets, err := s.loadBuckets()
 	if err != nil {
 		return nil, err
 	}
 	s.buckets = buckets
+	if err := s.loadIndex(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 

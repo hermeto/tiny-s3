@@ -11,13 +11,17 @@ import (
 	"github.com/hermeto/tiny-s3/internal/fsx"
 )
 
-// reopen opens root again through a fault-injecting filesystem.
+// reopen opens root again; its later operations go through a
+// fault-injecting filesystem with faults.
 func reopen(t *testing.T, root string, faults ...fsx.Fault) *Store {
 	t.Helper()
-	s, err := Open(fsx.NewFaulty(fsx.OS{}, faults...), root)
+	// Open without the faults: they are for the operations under test, and
+	// Open itself now reads every record to rebuild the index.
+	s, err := Open(fsx.OS{}, root)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
+	s.fsys = fsx.NewFaulty(fsx.OS{}, faults...)
 	s.now = func() time.Time { return fixedTime }
 	return s
 }

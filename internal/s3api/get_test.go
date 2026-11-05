@@ -232,7 +232,8 @@ func TestHeadObjectErrors(t *testing.T) {
 
 	h0, _, root, _ := readStore(t, nil)
 	mustPut(t, h0, "k", "x", nil)
-	fault := fsx.Fault{Op: fsx.OpOpen, PathPattern: filepath.Join(root, "meta", "*"), Err: errors.New("disk on fire")}
+	// Nth 2: the first open of the record is Open rebuilding the index.
+	fault := fsx.Fault{Op: fsx.OpOpen, PathPattern: filepath.Join(root, "meta", "*"), Nth: 2, Err: errors.New("disk on fire")}
 	store, err := storage.Open(fsx.NewFaulty(fsx.OS{}, fault), root)
 	if err != nil {
 		t.Fatal(err)

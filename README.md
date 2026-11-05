@@ -4,9 +4,8 @@ tiny-s3 is a minimal S3-compatible object store written in Go, with its own stor
 standard library in production code. So far it is the server, the S3 protocol layer, the storage engine and
 bucket support: it starts, checks its data directory, routes path-style S3 requests to their operation, creates,
 checks and lists buckets durably, stores objects durably with PutObject and reads them back with GetObject and
-HeadObject (whole or as a byte range), deletes them with DeleteObject, answers in the S3 XML error format, and
-shuts down cleanly. ListObjectsV2 answers `404 NoSuchBucket` on a missing bucket and `501 NotImplemented`
-otherwise, until its feature lands.
+HeadObject (whole or as a byte range), deletes them with DeleteObject, lists them with ListObjectsV2 from an
+in-memory ordered index, answers in the S3 XML error format, and shuts down cleanly.
 
 Everything runs in Docker. You need Docker (with Compose v2) and `make`; Go is not required on the host.
 
@@ -24,6 +23,8 @@ aws --endpoint-url http://localhost:9000 s3api put-object --bucket demo --key a/
 aws --endpoint-url http://localhost:9000 s3api get-object --bucket demo --key a/b.txt out.txt   # out.txt = hello.txt
 aws --endpoint-url http://localhost:9000 s3api head-object --bucket demo --key a/b.txt          # same headers, no body
 aws --endpoint-url http://localhost:9000 s3api get-object --bucket demo --key a/b.txt --range bytes=0-4 part.txt   # "hello"
+aws --endpoint-url http://localhost:9000 s3api list-objects-v2 --bucket demo --prefix a/ --delimiter /   # a/b.txt
+aws --endpoint-url http://localhost:9000 s3 ls s3://demo/a/                                     # the same, as a folder
 aws --endpoint-url http://localhost:9000 s3api delete-object --bucket demo --key a/b.txt       # 204, also when repeated
 curl -si http://localhost:9000/missing/key # 404 NoSuchBucket with an S3 XML error body
 curl -si -X PATCH http://localhost:9000/b  # 405 MethodNotAllowed
@@ -450,3 +451,31 @@ Trade-offs made so far, newest feature last.
   conditional headers ignored, no delete markers. Multi-object delete stays 501.
 - **Open downloads finish.** Unlinking the data file does not affect a reader that opened it; the e2e test now
   overwrites and deletes a key while a download of it is half read.
+
+### 012 ordered index and ListObjectsV2
+
+- **A sorted slice per bucket, in memory.** Keys are kept in UTF-8 byte order with their size, MD5 and
+  last-modified; page starts and group jumps are binary searches, and a listing reads no file (a test checks the
+  filesystem history stays empty). Inserting a new key shifts the slice: microseconds at 10k keys, about a
+  millisecond at 1M keys per bucket. A B-tree would remove that limit; it is a next step, not needed at this
+  scale. A 1,000-key page from 10,000 keys is checked to answer within 100 ms (`make test`; not under `-race`).
+- **The index mirrors the record files, under the key lock.** It changes exactly when a record is renamed in,
+  rolled back or removed (even if the following directory sync fails), so a listing never shows a key `Head` would
+  not find, or misses one it would. Every failure path of Put and Delete is tested against that rule.
+- **Rebuilt from `meta/` at startup**, as the constitution says. A record that does not decode, or sits under a
+  file name that is not its key's hash, is left out instead of stopping the server: reading it still answers 500
+  and writing or deleting it repairs it. I/O errors still fail startup. Crash cleanup and startup counts are 013.
+- **Tokens encode a position, not server state.** A continuation token is base64url of `k`+last key or
+  `g`+last common prefix; the next page starts strictly after that key, or after every key of that group. So
+  every key that exists for the whole listing is returned exactly once under concurrent writes (tested in
+  process under `-race` and through the CLI with 2,500 keys), and tokens survive restarts. A token wins over
+  `start-after`, which is still echoed.
+- **URL encoding that both decoders accept.** With `encoding-type=url` (the CLI's default), every byte except
+  unreserved characters and `/` becomes `%XX`, so a space is `%20` and `+` is `%2B`: correct whether the client
+  decodes with `unquote` or `unquote_plus` (the packaged botocore could not be inspected; the e2e test lists keys
+  with spaces, `+`, `%`, tabs and UTF-8 through the CLI).
+- **S3 details kept**: `max-keys` defaults to and caps at 1000, `max-keys=0` is an empty complete page,
+  `KeyCount` counts keys plus common prefixes, `StorageClass` is `STANDARD`, no owner. The CLI's paginator drops
+  per-page fields such as `KeyCount`; tests read them with `--no-paginate`.
+- **Not supported**: ListObjects v1 (501), `fetch-owner`, keys with characters XML 1.0 cannot carry unless
+  `encoding-type=url` is used.
