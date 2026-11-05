@@ -55,8 +55,14 @@ s3d [-listen ADDR] [-data-dir PATH]
 
 On the first SIGTERM or SIGINT, s3d stops accepting connections, closes idle ones, and waits up to 9 seconds
 for in-flight requests before closing the rest. It always exits within 10 seconds. Later signals are ignored
-while it drains. Logs are JSON lines on stdout (`listening`, `shutdown_started`, `shutdown_complete`,
-`shutdown_forced`, `handler_panic`); startup errors are one plain line on stderr (`s3d: <reason>`).
+while it drains. Logs are JSON lines on stdout (`recovery`, `listening`, `shutdown_started`, `shutdown_complete`,
+`shutdown_forced`, `handler_panic`, `storage_error`); startup errors are one plain line on stderr (`s3d: <reason>`).
+Every start logs `recovery` before `listening`, with the temp files and unreferenced bodies it removed and the
+objects, skipped records and buckets it loaded:
+
+```json
+{"level":"INFO","msg":"recovery","tmp_removed":0,"orphans_removed":0,"objects_indexed":1,"records_skipped":0,"buckets":1}
+```
 
 ## Development
 
@@ -479,3 +485,27 @@ Trade-offs made so far, newest feature last.
   per-page fields such as `KeyCount`; tests read them with `--no-paginate`.
 - **Not supported**: ListObjects v1 (501), `fetch-owner`, keys with characters XML 1.0 cannot carry unless
   `encoding-type=url` is used.
+
+### 013 crash recovery and concurrency
+
+- **Startup is a recovery pass.** `storage.Open` empties `tmp/`, loads the buckets, lists `data/`, indexes every
+  valid record whose body exists, and removes every body no indexed record names, then reports the counts that
+  `s3d` logs as `recovery`. The write order of 005 means a crash can only leave temp files, bodies without a
+  record (between the body and record renames) and replaced versions not yet removed; never a record without its
+  body. A record whose body is missing anyway (outside interference) is skipped and counted, not deleted.
+- **Cleanup needs no fsync and fails loudly.** Removing a leftover is idempotent, so a crash that undoes it just
+  repeats it next time; a removal that fails stops startup with the path, rather than serving with unknown state.
+- **Proven with a real SIGKILL mid-upload.** The e2e test starts 20 uploads of 4 MiB, lets 10 finish, polls `tmp/`
+  until the other 10 hold temp files (so the kill provably lands mid-body), plants an orphan, kills, restarts and
+  checks: the recovery line (10 temp files, 1 orphan, 10 objects), an empty `tmp/`, exactly the 10 acknowledged
+  keys listed and downloaded byte for byte, the listing equal to a scan of `meta/`, and 10 bodies in `data/`.
+  SIGKILL keeps the page cache, so this proves the on-disk ordering, not power-loss durability; the engine's
+  operation-order tests (005) cover the fsyncs.
+- **Randomized fault injection.** An engine test runs 200 random puts, overwrites and deletes per seed (20 fixed
+  seeds) with a random fault in a third of them; the faults make 18–39 operations fail per seed. Before and after a
+  reopen, the index equals an independent scan of the records, and after the reopen `data/` holds exactly the
+  referenced bodies. The test fails if the faults stop biting.
+- **Contention.** 50 concurrent uploads to one key end with exactly one of the bodies, its ETag, one body file and
+  an empty `tmp/` (e2e).
+- **Not checked at startup**: body checksums (reading every byte would make startup proportional to the data).
+  Bodies are complete by construction: they are renamed into `data/` only after a full, synced write.
