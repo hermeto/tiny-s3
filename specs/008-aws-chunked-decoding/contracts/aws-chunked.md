@@ -39,7 +39,7 @@ Values are base64 (standard alphabet, padded). At most one checksum per request.
 | Decoded length over 5 GiB | 400 | `EntityTooLarge` | before body |
 | Two checksums, or bad header value | 400 | `InvalidRequest` | before body |
 | Malformed stream, long line, bad trailer value, announced trailer missing | 400 | `InvalidRequest` | during/after body |
-| Stream ends early, or decoded bytes ≠ declared length | 400 | `IncompleteBody` | during/after body |
+| Stream ends early (EOF or unexpected EOF from the connection), or decoded bytes ≠ declared length | 400 | `IncompleteBody` | during/after body |
 | Checksum mismatch | 400 | `BadDigest` | after body, before commit |
 
 Nothing is stored on any error. A success answers 200 with `ETag` (MD5 of the decoded bytes), as in 007.

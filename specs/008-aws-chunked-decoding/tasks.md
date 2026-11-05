@@ -15,7 +15,7 @@
 ## Phase 2: Foundational (Blocking Prerequisites)
 
 - [ ] T002 [P] Write failing tests in `internal/awschunked/reader_test.go`: the captured CLI stream (`b\r\nhello world\r\n0\r\nx-amz-checksum-crc64nvme:jSnVw/bqjr4=\r\n\r\n`) decodes to `hello world` with that trailer; several chunks; signed chunks (`;chunk-signature=<64 hex>`) with and without trailers and with `x-amz-trailer-signature`; an empty object (`0\r\n\r\n`); upper-case hex sizes; `Trailer` before EOF returns false; trailer names are case-insensitive; reads with 1-byte buffers
-- [ ] T003 [P] Write failing malformed/truncated tests in `internal/awschunked/reader_test.go`: bad hex, empty size, size over 63 bits, missing CRLF after data, bare LF, line of 4097 bytes ("at most 4096 bytes including CRLF"), trailer without `:`, 17 trailers ("at most 16"), bytes after the final CRLF → `ErrMalformed`; EOF inside a header, data, trailer or before the final CRLF → `ErrTruncated`; an underlying read error passes through unchanged
+- [ ] T003 [P] Write failing malformed/truncated tests in `internal/awschunked/reader_test.go`: bad hex, empty size, size over 63 bits, missing CRLF after data, bare LF, line of 4097 bytes ("at most 4096 bytes including CRLF"), trailer without `:`, 17 trailers ("at most 16"), bytes after the final CRLF → `ErrMalformed`; EOF or `io.ErrUnexpectedEOF` (what net/http returns for a cut HTTP chunked body) inside a header, data, trailer or before the final CRLF → `ErrTruncated`; any other underlying read error passes through unchanged
 - [ ] T004 [P] Write a failing bounded-memory test in `internal/awschunked/memory_test.go`: a lazily generated 64 MiB single-chunk stream decodes through `io.CopyBuffer` with `TotalAlloc` growth below 4 MiB
 - [ ] T005 Implement the decoder in `internal/awschunked/reader.go` (research R2)
 - [ ] T006 [P] Write a failing test in `internal/storage/put_test.go`: `PutOptions.Verify` is called once after the body is read and before the commit; its error fails `Put` (errors.Is the returned error), leaves the previous object unchanged and `tmp/`/`data/` without new files; a nil `Verify` changes nothing
@@ -65,7 +65,7 @@ Covered by T004 (64 MiB single chunk) and T003 (line limit). No extra task.
 
 ## Phase 7: Polish
 
-- [ ] T019 Add the `### 008 aws-chunked decoding` design section to `README.md` (research R1–R8) and update the 007 bullets that said aws-chunked and checksums were not handled
+- [ ] T019 Add the `### 008 aws-chunked decoding` design section to `README.md` (research R1–R8) and update the 007 bullets that said aws-chunked and checksums were not handled; record that `Content-Encoding` is not stored, so an `aws-chunked,gzip` upload reads back as the gzip payload without its encoding header
 - [ ] T020 Run `make vet test race cover e2e`; 100% for every `internal/` package
 - [ ] T021 Run `quickstart.md` against `docker compose up -d --build`, then `docker compose down -v`
 
@@ -81,3 +81,15 @@ Covered by T004 (64 MiB single chunk) and T003 (line limit). No extra task.
 ## Implementation Strategy
 
 Decoder and checksum building blocks first, then wire them into PutObject (MVP with the real CLI), then rejections.
+
+## Analysis Remediation (2026-11-04)
+
+`/speckit-analyze` findings, fixed with the recommended option:
+
+| ID | Severity | Finding | Fix |
+|----|----------|---------|-----|
+| I1 | MEDIUM | The spec's edge case says a client disconnecting mid-stream gets `IncompleteBody`, but the contract let every underlying error pass through, and net/http reports a cut chunked body as `io.ErrUnexpectedEOF`. | T003 maps `io.ErrUnexpectedEOF` to `ErrTruncated` too; the contract is read that way. |
+| I2 | MEDIUM | The `aws-chunked,gzip` edge case stores the gzip payload, but 007 does not store `Content-Encoding`, so the object reads back without its encoding. | Accepted; T019 records it in the README. |
+| C1 | LOW | User Story 4 has no tasks of its own. | Covered by T003 (line limit) and T004 (64 MiB single chunk); stated in Phase 6. |
+
+No constitution conflicts. Coverage: FR-001–FR-011 and SC-001–SC-004 each map to at least one task (100%).
