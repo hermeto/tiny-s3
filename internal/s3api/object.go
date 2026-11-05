@@ -87,7 +87,7 @@ func HeadObjectOp(store ObjectStore, log *slog.Logger) Op {
 }
 
 // startObjectResponse writes the status and headers of a GET or HEAD answer
-// for info: 412/304 from the conditional headers, then 206 for a served
+// for info: 412/304 from the conditional headers, then 416 or 206 for a
 // Range (unless If-Range does not match), else 200. It returns the part of
 // the body to send, or false when the response needs no body.
 func startObjectResponse(w http.ResponseWriter, r *http.Request, info storage.Info) (first, length int64, ok bool) {
@@ -95,8 +95,16 @@ func startObjectResponse(w http.ResponseWriter, r *http.Request, info storage.In
 		writeConditional(w, r, status, info)
 		return 0, 0, false
 	}
+	var rng byteRange
+	if v := r.Header.Get("If-Range"); v == "" || ifRangeMatches(v, info) {
+		rng = parseRange(r.Header.Get("Range"), info.Size)
+	}
+	if rng.kind == rangeUnsatisfiable {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", info.Size))
+		WriteError(w, r, ErrInvalidRange)
+		return 0, 0, false
+	}
 	writeObjectHeaders(w.Header(), info)
-	rng := parseRange(r.Header.Get("Range"), info.Size)
 	if rng.kind == rangeServe {
 		length = rng.last - rng.first + 1
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))

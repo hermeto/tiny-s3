@@ -103,3 +103,69 @@ func TestRangeReadFailureAborts(t *testing.T) {
 		t.Fatalf("status %d, %d bytes, err %v; want 206 then a failed read", resp.StatusCode, len(got), err)
 	}
 }
+
+func TestRangeUnsatisfiable(t *testing.T) {
+	t.Parallel()
+	h, _ := rangeObject(t)
+	mustPut(t, h, "empty", "", nil)
+	for _, tt := range []struct{ key, rng, size string }{
+		{"r", "bytes=1000-", "1000"},
+		{"r", "bytes=5000-6000", "1000"},
+		{"r", "bytes=-0", "1000"},
+		{"empty", "bytes=0-", "0"},
+		{"empty", "bytes=-5", "0"},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			r := httptest.NewRequest(method, "/demo/"+tt.key, nil)
+			r.Header.Set("Range", tt.rng)
+			w := serveReq(h, r)
+			wantError(t, w, method, ErrInvalidRange)
+			if got := w.Header().Get("Content-Range"); got != "bytes */"+tt.size {
+				t.Fatalf("%s %s %s: Content-Range %q", method, tt.key, tt.rng, got)
+			}
+		}
+	}
+}
+
+func TestConditionsBeatRange(t *testing.T) {
+	t.Parallel()
+	h, _ := rangeObject(t)
+	etag := serveReq(h, httptest.NewRequest(http.MethodHead, "/demo/r", nil)).Header().Get("ETag")
+	w := serveReq(h, rangeReq(http.MethodGet, "bytes=5000-", http.Header{"If-None-Match": {etag}}))
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("If-None-Match with an unsatisfiable range = %d, want 304", w.Code)
+	}
+	wantError(t, serveReq(h, rangeReq(http.MethodGet, "bytes=0-9", http.Header{"If-Match": {`"0000"`}})), http.MethodGet, ErrPreconditionFailed)
+}
+
+func TestRangeIgnoredServesWholeObject(t *testing.T) {
+	t.Parallel()
+	h, body := rangeObject(t)
+	head := serveReq(h, httptest.NewRequest(http.MethodHead, "/demo/r", nil))
+	etag, modified := head.Header().Get("ETag"), head.Header().Get("Last-Modified")
+	whole := []struct {
+		rng    string
+		header http.Header
+	}{
+		{"bytes=0-1,5-6", nil},
+		{"bytes=abc", nil},
+		{"items=0-1", nil},
+		{"bytes=5-3", nil},
+		{"bytes=0-9", http.Header{"If-Range": {`"00000000000000000000000000000000"`}}},
+		{"bytes=0-9", http.Header{"If-Range": {"W/" + etag}}},
+		{"bytes=0-9", http.Header{"If-Range": {"Mon, 02 Jan 2006 15:04:05 GMT"}}},
+		{"bytes=5000-", http.Header{"If-Range": {`"stale"`}}}, // stale If-Range wins over 416
+	}
+	for _, tt := range whole {
+		w := serveReq(h, rangeReq(http.MethodGet, tt.rng, tt.header))
+		if w.Code != http.StatusOK || w.Body.String() != string(body) || w.Header().Get("Content-Range") != "" {
+			t.Fatalf("%s %v: %d, %d bytes, Content-Range %q; want the whole object", tt.rng, tt.header, w.Code, w.Body.Len(), w.Header().Get("Content-Range"))
+		}
+	}
+	for _, v := range []string{etag, modified} {
+		w := serveReq(h, rangeReq(http.MethodGet, "bytes=0-9", http.Header{"If-Range": {v}}))
+		if w.Code != http.StatusPartialContent || w.Body.String() != string(body[:10]) {
+			t.Fatalf("If-Range %q: %d, want 206", v, w.Code)
+		}
+	}
+}
