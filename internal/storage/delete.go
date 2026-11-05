@@ -30,6 +30,9 @@ func (s *Store) Delete(bucket, key string) error {
 	if err := s.fsys.Remove(s.recordPath(name)); err != nil {
 		return fmt.Errorf("storage: remove record: %w", err)
 	}
+	// The record file is gone, so the key is gone for Head and Get: the
+	// index follows now, even if the sync below fails.
+	s.index.remove(bucket, key)
 	if err := s.syncDir(metaDir); err != nil {
 		return err
 	}
